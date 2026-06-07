@@ -104,7 +104,8 @@ void ScopeComponent::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xff6a717a));
         g.setFont (juce::Font (juce::FontOptions().withName (juce::Font::getDefaultMonospacedFontName()).withHeight (10.0f)));
         const juce::String txt = juce::String (lastFreq, 1) + " Hz   " + juce::String (noteNameForHz (lastFreq))
-                               + "   " + juce::String ((int) (lastClarity * 100.0f)) + "%";
+                               + "   " + juce::String ((int) (lastClarity * 100.0f)) + "%"
+                               + (cyclesMorph ? "   \xc2\xb7 unison" : ""); // morphing detune/unison -> live cycle
         g.drawText (txt, bounds.toNearestInt().removeFromTop (18).reduced (10, 3), juce::Justification::right);
         if (soft)
         {
@@ -227,14 +228,22 @@ bool ScopeComponent::buildBaseShape (std::vector<float>& ys, int width, float mi
     {
         lastFreq = (float) (proc.currentSampleRate.load() / (double) period);
         lastClarity = pr.clarity;
-        const bool stable = pr.clarity >= 0.7f;
-        unstable = ! stable;
+
+        // Decide HOW to build the cycle from cycle self-similarity, not pitch clarity. A supersaw
+        // is strongly pitched (clarity ~0.99) yet its detuned oscillators make every cycle
+        // different -- averaging them collapses the texture into a static blur ("stuck"). Clarity
+        // can't see this; selfSim (autocorr several periods out) can: ~1.0 = one repeating shape,
+        // well below = morphing. See cycleSelfSimilarity() and Tests/test_cyclesim.cpp.
+        const float selfSim  = cycleSelfSimilarity (capture.data(), captureSize, period);
+        const bool  pitched  = pr.clarity >= 0.7f;
+        const bool  repeating = pitched && selfSim >= 0.9f; // single osc/wavetable -> average
+        cyclesMorph = pitched && ! repeating;               // supersaw/unison -> animate latest
+        unstable    = ! pitched;                            // genuinely unpitched -> "no cycle"
 
         const int anchor = findRisingZero (capture.data(), captureSize, (int) (period * 2.0f));
-        // Stable (single oscillator/wavetable): average recent cycles into one clean cycle.
-        // Unstable (supersaw/unison/detune is non-periodic by design): take the LATEST single
-        // cycle as an animated snapshot so the detune texture is preserved, not averaged away.
-        const int recentN = stable ? 6 : 1;
+        // Repeating: average recent cycles into one clean, denoised shape. Morphing/unpitched:
+        // take the LATEST single cycle so the live texture is preserved, not averaged away.
+        const int recentN = repeating ? 6 : 1;
         auto avg = averageCycle (capture.data(), captureSize, period, perCycle, anchor, true, recentN);
         if (! avg.empty())
         {
@@ -242,12 +251,15 @@ bool ScopeComponent::buildBaseShape (std::vector<float>& ys, int width, float mi
             const int n = (int) avg.size();
             if (hasHeld && (int) heldCycle.size() == n)
             {
-                // cross-correlation phase anchor: rotate into phase (both modes -> no horizontal jitter)
+                // cross-correlation phase anchor: rotate into phase (all modes -> no horizontal jitter)
                 const int s = bestCircularShift (avg.data(), heldCycle.data(), n);
                 rotateInPlace (avg.data(), n, s);
-                if (stable)
+                if (repeating || cyclesMorph)
                 {
-                    const float a = 0.35f; // EMA blend -> clean, denoised, steady
+                    // EMA blend. Repeating -> slow (0.35): clean, denoised, steady. Morphing ->
+                    // fast (0.6): stays alive and follows the detune, only de-jittering frame noise
+                    // (full averaging is what made the supersaw look stuck).
+                    const float a = repeating ? 0.35f : 0.6f;
                     for (int i = 0; i < n; ++i)
                         heldCycle[(size_t) i] = (1.0f - a) * heldCycle[(size_t) i] + a * avg[(size_t) i];
                     // Re-normalise: bestCircularShift aligns to whole samples only, so sub-sample
@@ -257,7 +269,7 @@ bool ScopeComponent::buildBaseShape (std::vector<float>& ys, int width, float mi
                 }
                 else
                 {
-                    heldCycle = std::move (avg); // phase-locked snapshot that animates in place
+                    heldCycle = std::move (avg); // unpitched: phase-locked snapshot
                 }
             }
             else

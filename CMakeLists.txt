@@ -93,3 +93,7 @@ add_test(NAME notename COMMAND test_notename)
 add_executable(test_stereoutils Tests/test_stereoutils.cpp)
 target_include_directories(test_stereoutils PRIVATE Source)
 add_test(NAME stereoutils COMMAND test_stereoutils)
+
+add_executable(test_cyclesim Tests/test_cyclesim.cpp)
+target_include_directories(test_cyclesim PRIVATE Source)
+add_test(NAME cyclesim COMMAND test_cyclesim)
