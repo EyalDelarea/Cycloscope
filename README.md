@@ -1,6 +1,8 @@
 # Cycloscope
 
 [![CI](https://github.com/EyalDelarea/Cycloscope/actions/workflows/ci.yml/badge.svg)](https://github.com/EyalDelarea/Cycloscope/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/EyalDelarea/Cycloscope?display_name=tag&sort=semver)](https://github.com/EyalDelarea/Cycloscope/releases)
+[![Downloads](https://img.shields.io/github/downloads/EyalDelarea/Cycloscope/total)](https://github.com/EyalDelarea/Cycloscope/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)
 
