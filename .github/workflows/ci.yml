@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    name: Build · Test · auval (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (universal)
+        run: cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Standalone + VST3 + AU)
+        run: cmake --build build -j3
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      # COPY_PLUGIN_AFTER_BUILD installs the .component to ~/Library; validate it.
+      # Allowed to fail: GitHub's headless runners sometimes lack the audio HAL.
+      - name: AU validation (auval)
+        continue-on-error: true
+        run: auval -v aufx Cycl Eyal
+
+      - name: Verify universal binaries
+        run: |
+          found=0
+          while IFS= read -r b; do
+            found=1; echo "== $b =="; lipo -archs "$b"
+            lipo -archs "$b" | grep -q "x86_64" && lipo -archs "$b" | grep -q "arm64" \
+              || { echo "::error::$b is not universal"; exit 1; }
+          done < <(find build -path '*/Contents/MacOS/Cycloscope' -type f)
+          [ "$found" = 1 ] || { echo "::error::no plugin binaries found"; exit 1; }
+
+  build-windows:
+    name: Build · Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Standalone + VST3)
+        run: cmake --build build --config Release -j
+
+      - name: Unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
