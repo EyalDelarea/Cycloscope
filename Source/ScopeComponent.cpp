@@ -10,6 +10,13 @@
 
 ScopeComponent::ScopeComponent (CycloscopeProcessor& p) : proc (p)
 {
+    // Reserve the capture buffers once up front so paint() never allocates on the
+    // message thread. 2x the ring capacity covers the widest Time-zoom window (the
+    // trigger search needs a 2x-window capture); anything beyond is zero-padded.
+    const size_t cap = 2 * 192000;
+    capture.reserve (cap);
+    capL.reserve (cap);
+    capR.reserve (cap);
     startTimerHz (60); // first-class feel
 }
 
@@ -55,25 +62,33 @@ void ScopeComponent::paint (juce::Graphics& g)
         drawGhost (g, capB, midY, halfH, width, juce::Colour (0x6655e08a)); // B = green
     }
 
-    std::vector<float> ys ((size_t) width, midY);
     bool haveTrace = false;
     stereoTrace = false; // buildLive sets it true for the Stereo source
 
     if (modeIdx == 1) // Base Shape
-        haveTrace = buildBaseShape (ys, width, midY, halfH, ampZoom);
+        haveTrace = buildBaseShape (width, midY, halfH);
 
     if (! haveTrace) // Live, or Base Shape fallback
-        buildLive (ys, width, midY, halfH, ampZoom);
-
-    juce::Path path;
-    path.startNewSubPath (0.0f, ys[0]);
-    for (int x = 1; x < width; ++x) path.lineTo ((float) x, ys[(size_t) x]);
+        buildLive (width, midY, halfH, ampZoom);
 
     // low-clarity sources read as "uncertain": soften the trace (calm, not alarming)
     const bool soft = (modeIdx == 1 && haveTrace && unstable);
 
-    // gradient fill under the trace
-    juce::Path fill = path;
+    // The trace is a min/max envelope (yHi = upper edge, yLo = lower edge). When zoomed
+    // in it collapses to a single line (yHi == yLo); when zoomed out it fills into a
+    // solid waveform band. Helper builds the upper-edge path shared by fill + stroke.
+    auto edgePath = [width] (const std::vector<float>& e)
+    {
+        juce::Path p;
+        p.startNewSubPath (0.0f, e[0]);
+        for (int x = 1; x < width; ++x) p.lineTo ((float) x, e[(size_t) x]);
+        return p;
+    };
+
+    const juce::Path top = edgePath (yHi);
+
+    // gradient fill under the upper edge (the signature area-under-trace look)
+    juce::Path fill = top;
     fill.lineTo ((float) (width - 1), midY);
     fill.lineTo (0.0f, midY);
     fill.closeSubPath();
@@ -82,20 +97,45 @@ void ScopeComponent::paint (juce::Graphics& g)
         juce::Colour (0x00ff8a2b), 0.0f, midY, false));
     g.fillPath (fill);
 
-    // crisp orange stroke with a subtle glow underlay (calm)
-    g.setColour (juce::Colour (soft ? 0x18ff8a2b : 0x33ff8a2b));
-    g.strokePath (path, juce::PathStrokeType (3.0f));
-    g.setColour (juce::Colour (soft ? 0x66ff8a2b : 0xffff8a2b));
-    g.strokePath (path, juce::PathStrokeType (1.8f));
+    // waveform body: fill the min/max band. Zero-area (invisible) when zoomed in,
+    // a solid silhouette when zoomed out -> reads like a real scope, not an aliased line.
+    juce::Path band = top;
+    for (int x = width - 1; x >= 0; --x) band.lineTo ((float) x, yLo[(size_t) x]);
+    band.closeSubPath();
+    g.setColour (juce::Colour (soft ? 0x22ff8a2b : 0x59ff8a2b));
+    g.fillPath (band);
 
-    // Stereo source: overlay the right channel (blue) on top of left (orange)
-    if (stereoTrace && (int) traceR.size() >= width)
+    // crisp orange edges with a subtle glow underlay on the upper edge. The lower edge
+    // strokes opaque-only, so when the band collapses to a line it overlays exactly.
+    const juce::Path bot = edgePath (yLo);
+
+    // The glow underlay (wide, soft stroke on the top edge) is the costliest draw at high
+    // Time zoom -- and there the filled band already supplies the body/glow, so the halo
+    // is invisible. Draw it only when the trace is line-like (thin/no band), where it
+    // actually reads. Gate on max band thickness; this also covers Base Shape (a line).
+    float maxBand = 0.0f;
+    for (int x = 0; x < width; ++x) maxBand = juce::jmax (maxBand, std::abs (yHi[(size_t) x] - yLo[(size_t) x]));
+    if (maxBand < 2.0f)
     {
-        juce::Path pR;
-        pR.startNewSubPath (0.0f, traceR[0]);
-        for (int x = 1; x < width; ++x) pR.lineTo ((float) x, traceR[(size_t) x]);
+        g.setColour (juce::Colour (soft ? 0x18ff8a2b : 0x33ff8a2b));
+        g.strokePath (top, juce::PathStrokeType (3.0f));
+    }
+    g.setColour (juce::Colour (soft ? 0x66ff8a2b : 0xffff8a2b));
+    g.strokePath (top, juce::PathStrokeType (1.8f));
+    g.strokePath (bot, juce::PathStrokeType (1.8f));
+
+    // Stereo source: overlay the right channel (blue) envelope on top of left (orange)
+    if (stereoTrace && (int) yHiR.size() >= width && (int) yLoR.size() >= width)
+    {
+        const juce::Path topR = edgePath (yHiR);
+        juce::Path bandR = topR;
+        for (int x = width - 1; x >= 0; --x) bandR.lineTo ((float) x, yLoR[(size_t) x]);
+        bandR.closeSubPath();
+        g.setColour (juce::Colour (0x305fb0ff));
+        g.fillPath (bandR);
         g.setColour (juce::Colour (0xcc5fb0ff));
-        g.strokePath (pR, juce::PathStrokeType (1.4f));
+        g.strokePath (topR, juce::PathStrokeType (1.4f));
+        g.strokePath (edgePath (yLoR), juce::PathStrokeType (1.4f));
     }
 
     // pitch / clarity readout (Base Shape), calm muted text in the existing label style
@@ -131,8 +171,7 @@ void ScopeComponent::paint (juce::Graphics& g)
     }
 }
 
-void ScopeComponent::buildLive (std::vector<float>& ys, int width, float midY,
-                                float halfH, float ampZoom)
+void ScopeComponent::buildLive (int width, float midY, float halfH, float ampZoom)
 {
     float samplesPerPixel = proc.apvts.getRawParameterValue ("timeZoom")->load();
     const float threshold = proc.apvts.getRawParameterValue ("threshold")->load();
@@ -152,65 +191,70 @@ void ScopeComponent::buildLive (std::vector<float>& ys, int width, float midY,
 
     const int window = (int) (width * samplesPerPixel);
     const int captureSize = window * 2;
-    capture.assign ((size_t) captureSize, 0.0f);
+    capture.resize ((size_t) captureSize); // reserved in ctor -> no realloc, copyLatest overwrites
     copyLatestMono (capture.data(), captureSize); // also fills capL/capR members
     bool triggered = false;
     const float start = findTriggerIndex (capture.data(), captureSize, window, mode, threshold, 0.05f, &triggered);
 
-    // measurement (cheap, O(N)): peak-to-peak + RMS over the captured window
-    float mn = 1.0e9f, mx = -1.0e9f;
-    for (int i = 0; i < captureSize; ++i) { const float v = capture[(size_t) i]; mn = juce::jmin (mn, v); mx = juce::jmax (mx, v); }
-    liveVpp = (mx > mn) ? (mx - mn) : 0.0f;
-    liveRms = rmsDb (capture.data(), captureSize);
-
-    stereoTrace = (src == 4); // Stereo source: overlay L (primary) + R
-    if (stereoTrace) traceR.assign ((size_t) width, midY);
-
-    auto interp = [] (const std::vector<float>& b, float pos) -> float
+    // measurement: peak-to-peak + RMS over the VISIBLE window (single pass), so the
+    // readout matches what's drawn rather than the 2x-window trigger-search capture.
     {
-        const int i0 = (int) pos;
-        if (i0 >= 0 && i0 + 1 < (int) b.size())
-        {
-            const float f = pos - (float) i0;
-            return b[(size_t) i0] * (1.0f - f) + b[(size_t) (i0 + 1)] * f;
-        }
-        if (i0 >= 0 && i0 < (int) b.size()) return b[(size_t) i0];
-        return 0.0f;
-    };
-
-    for (int x = 0; x < width; ++x)
-    {
-        const float pos = start + (float) x * samplesPerPixel; // sub-sample aligned
-        if (stereoTrace)
-        {
-            ys[(size_t) x]     = midY - interp (capL, pos) * ampZoom * halfH;
-            traceR[(size_t) x] = midY - interp (capR, pos) * ampZoom * halfH;
-        }
-        else
-        {
-            ys[(size_t) x] = midY - interp (capture, pos) * ampZoom * halfH;
-        }
+        const int s0 = juce::jlimit (0, captureSize, (int) start);
+        const int s1 = juce::jlimit (0, captureSize, s0 + window);
+        float mn = 1.0e9f, mx = -1.0e9f;
+        for (int i = s0; i < s1; ++i) { const float v = capture[(size_t) i]; mn = juce::jmin (mn, v); mx = juce::jmax (mx, v); }
+        liveVpp = (s1 > s0 && mx > mn) ? (mx - mn) : 0.0f;
+        liveRms = (s1 > s0) ? rmsDb (capture.data() + s0, s1 - s0) : -100.0f;
     }
 
+    stereoTrace = (src == 4); // Stereo source: overlay L (primary) + R
+    yHi.resize ((size_t) width);
+    yLo.resize ((size_t) width);
+
+    // Per-pixel min/max decimation: one read of each window sample, into a true
+    // envelope. Collapses to a single line when zoomed in (spp < 1), fills out into
+    // a solid waveform when zoomed out -- correct AND cheap regardless of Time zoom.
+    auto toPixels = [&] (std::vector<float>& hi, std::vector<float>& lo)
+    {
+        for (int x = 0; x < width; ++x)
+        {
+            hi[(size_t) x] = midY - hi[(size_t) x] * ampZoom * halfH; // sample max -> top (small y)
+            lo[(size_t) x] = midY - lo[(size_t) x] * ampZoom * halfH; // sample min -> bottom
+        }
+    };
+
+    if (stereoTrace)
+    {
+        yHiR.resize ((size_t) width);
+        yLoR.resize ((size_t) width);
+        decimateMinMax (capL.data(), captureSize, start, samplesPerPixel, width, yLo.data(),  yHi.data());
+        decimateMinMax (capR.data(), captureSize, start, samplesPerPixel, width, yLoR.data(), yHiR.data());
+        toPixels (yHi, yLo);
+        toPixels (yHiR, yLoR);
+        return; // sweep hold applies to the mono trace only (unchanged behavior)
+    }
+
+    decimateMinMax (capture.data(), captureSize, start, samplesPerPixel, width, yLo.data(), yHi.data());
+    toPixels (yHi, yLo);
+
     // Sweep: Auto (free-run, default), Normal (hold last triggered frame), Single
-    // (capture one triggered frame then hold until re-armed). Applies to the mono trace.
+    // (capture one triggered frame then hold until re-armed). Holds the full envelope.
     const int sweep = (int) proc.apvts.getRawParameterValue ("triggerSweep")->load();
     if (sweep == 2 && prevSweep != 2) liveArmed = true; // re-arm on (re)selecting Single
     prevSweep = sweep;
-    if (! stereoTrace && sweep != 0)
+    if (sweep != 0)
     {
-        const bool sizeOk = ((int) heldLiveFrame.size() == width);
+        const bool sizeOk = ((int) heldHi.size() == width && (int) heldLo.size() == width);
         bool hold = false;
         if (sweep == 1)            hold = (! triggered && sizeOk);          // Normal
         else if (triggered && liveArmed) liveArmed = false;                  // Single: accept this frame
         else                       hold = sizeOk;                            // Single: hold
-        if (hold) for (int x = 0; x < width; ++x) ys[(size_t) x] = heldLiveFrame[(size_t) x];
-        else      heldLiveFrame.assign (ys.begin(), ys.end());
+        if (hold) { yHi = heldHi; yLo = heldLo; }
+        else      { heldHi = yHi; heldLo = yLo; }
     }
 }
 
-bool ScopeComponent::buildBaseShape (std::vector<float>& ys, int width, float midY,
-                                     float halfH, float /*ampZoom*/)
+bool ScopeComponent::buildBaseShape (int width, float midY, float halfH)
 {
     const int cycles = juce::jlimit (1, 8, (int) proc.apvts.getRawParameterValue ("cycles")->load());
 
@@ -270,11 +314,15 @@ bool ScopeComponent::buildBaseShape (std::vector<float>& ys, int width, float mi
 
     if (! hasHeld) return false; // nothing captured yet -> Live fallback
 
+    yHi.resize ((size_t) width);
+    yLo.resize ((size_t) width);
     const int hn = (int) heldCycle.size();
     for (int x = 0; x < width; ++x)
     {
         const int idx = juce::jlimit (0, hn - 1, x % hn);
-        ys[(size_t) x] = midY - heldCycle[(size_t) idx] * halfH; // Base Shape ignores Amplitude (auto-normalized)
+        const float y = midY - heldCycle[(size_t) idx] * halfH; // Base Shape ignores Amplitude (auto-normalized)
+        yHi[(size_t) x] = y;
+        yLo[(size_t) x] = y; // single line (no envelope) in Base Shape
     }
     return true;
 }
@@ -311,8 +359,10 @@ void ScopeComponent::drawGrid (juce::Graphics& g, juce::Rectangle<float> b, bool
 
 void ScopeComponent::copyLatestMono (float* dest, int numSamples)
 {
-    capL.assign ((size_t) numSamples, 0.0f);
-    capR.assign ((size_t) numSamples, 0.0f);
+    // resize (not assign): the buffers are reserved once in the ctor, so this never
+    // reallocates and copyLatest overwrites every element (no need to pre-zero).
+    capL.resize ((size_t) numSamples);
+    capR.resize ((size_t) numSamples);
     proc.getScopeBufferL().copyLatest (capL.data(), numSamples);
     proc.getScopeBufferR().copyLatest (capR.data(), numSamples);
     const int src = (int) proc.apvts.getRawParameterValue ("channelSource")->load();

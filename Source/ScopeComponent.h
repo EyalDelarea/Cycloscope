@@ -2,6 +2,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 #include "PluginProcessor.h"
+#include "ScopeReduce.h"
 #include <vector>
 
 class ScopeComponent : public juce::Component, private juce::Timer
@@ -25,8 +26,8 @@ private:
     void drawGrid (juce::Graphics& g, juce::Rectangle<float> b, bool baseShape);
     void ensureGrid (int w, int h, bool baseShape);
     void paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b);
-    void buildLive (std::vector<float>& ys, int width, float midY, float halfH, float ampZoom);
-    bool buildBaseShape (std::vector<float>& ys, int width, float midY, float halfH, float ampZoom);
+    void buildLive (int width, float midY, float halfH, float ampZoom);
+    bool buildBaseShape (int width, float midY, float halfH);
     void copyLatestMono (float* dest, int numSamples);
 
     CycloscopeProcessor& proc;
@@ -34,7 +35,10 @@ private:
     std::vector<float> capL, capR;
     std::vector<float> heldCycle;
     std::vector<float> capA, capB; // captured single cycles for A/B compare
-    std::vector<float> traceR;     // right-channel trace for the Stereo source
+    // Per-pixel trace envelope (pixel-space Y): yHi = upper (max), yLo = lower (min).
+    // A line collapses to yHi == yLo; a dense waveform fills the band between them.
+    std::vector<float> yHi, yLo;     // primary trace (mono / left)
+    std::vector<float> yHiR, yLoR;   // right-channel overlay for the Stereo source
     bool stereoTrace = false;
     bool hasHeld = false;
     bool unstable = false;
@@ -42,7 +46,7 @@ private:
     float lastClarity = 0.0f;
     float liveVpp = 0.0f;   // Live measurement: peak-to-peak
     float liveRms = -100.0f; // Live measurement: RMS dBFS
-    std::vector<float> heldLiveFrame; // Normal/Single sweep: last triggered frame
+    std::vector<float> heldHi, heldLo; // Normal/Single sweep: last triggered frame (envelope)
     bool liveArmed = true;
     int prevSweep = -1;
 

@@ -60,6 +60,25 @@ target_link_libraries(Cycloscope
     juce::juce_recommended_warning_flags
 )
 
+# ---- Offline render harness (visual verification of the scope trace) ----
+juce_add_console_app(render_scope_preview)
+target_sources(render_scope_preview PRIVATE Tools/render_scope_preview.cpp)
+target_include_directories(render_scope_preview PRIVATE Source)
+target_link_libraries(render_scope_preview PRIVATE
+    juce::juce_graphics
+    juce::juce_recommended_config_flags)
+
+juce_add_console_app(bench_render)
+target_sources(bench_render PRIVATE Tools/bench_render.cpp)
+target_include_directories(bench_render PRIVATE Source)
+target_link_libraries(bench_render PRIVATE
+    juce::juce_graphics
+    juce::juce_recommended_config_flags)
+
+# Data-path micro-benchmark (no JUCE: header-only Source/, so a plain executable).
+add_executable(bench_buildlive Tools/bench_buildlive.cpp)
+target_include_directories(bench_buildlive PRIVATE Source)
+
 # ---- Tests ----
 enable_testing()
 add_executable(test_ringbuffer Tests/test_ringbuffer.cpp)
@@ -93,3 +112,7 @@ add_test(NAME notename COMMAND test_notename)
 add_executable(test_stereoutils Tests/test_stereoutils.cpp)
 target_include_directories(test_stereoutils PRIVATE Source)
 add_test(NAME stereoutils COMMAND test_stereoutils)
+
+add_executable(test_scopereduce Tests/test_scopereduce.cpp)
+target_include_directories(test_scopereduce PRIVATE Source)
+add_test(NAME scopereduce COMMAND test_scopereduce)
