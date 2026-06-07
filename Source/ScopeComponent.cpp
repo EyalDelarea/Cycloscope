@@ -17,6 +17,7 @@ ScopeComponent::ScopeComponent (CycloscopeProcessor& p) : proc (p)
     capture.reserve (cap);
     capL.reserve (cap);
     capR.reserve (cap);
+    fftData.reserve ((size_t) (2 << kFftOrder)); // 2*fftSize, reserved so paint() never reallocs
     startTimerHz (60); // first-class feel
 }
 
@@ -455,29 +456,41 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
     const int numBins = fftSize / 2;
     g.fillAll (juce::Colour (0xff0e1114));
 
-    // windowed mono FFT
-    fftData.assign ((size_t) (2 * fftSize), 0.0f);
+    // ---- windowed mono FFT. resize()+fill (not assign): fftData is reserved in the ctor, so
+    //      this never reallocates on the message thread. Zero the whole working buffer. ----
+    fftData.resize ((size_t) (2 * fftSize));
+    std::fill (fftData.begin(), fftData.end(), 0.0f);
     copyLatestMono (fftData.data(), fftSize);
     fftWindow.multiplyWithWindowingTable (fftData.data(), (size_t) fftSize);
     fft.performFrequencyOnlyForwardTransform (fftData.data()); // magnitudes [0..numBins]
 
+    // ---- per-bin dB with asymmetric, frame-rate-INDEPENDENT ballistics (fast attack, slow
+    //      release) -> a settled curve like Pro-Q's "Speed", using the real elapsed time. ----
     if ((int) specMag.size() != numBins) specMag.assign ((size_t) numBins, -120.0f);
     const bool frozen = proc.apvts.getRawParameterValue ("freeze")->load() > 0.5f;
-    for (int i = 0; i < numBins; ++i)
-    {
-        const float mag = fftData[(size_t) i] / (float) fftSize;
-        const float db  = juce::Decibels::gainToDecibels (mag, -120.0f);
-        specMag[(size_t) i] = frozen ? specMag[(size_t) i]
-                                     : specMag[(size_t) i] * 0.7f + db * 0.3f; // temporal smoothing
-    }
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    double dt = (lastSpecMs > 0.0) ? (nowMs - lastSpecMs) * 0.001 : 1.0 / 60.0;
+    lastSpecMs = nowMs;
+    dt = juce::jlimit (0.001, 0.1, dt);
+    const float aAtk = (float) (1.0 - std::exp (-dt / 0.02)); // ~20 ms attack
+    const float aRel = (float) (1.0 - std::exp (-dt / 0.30)); // ~300 ms release
+    if (! frozen)
+        for (int i = 0; i < numBins; ++i)
+        {
+            const float mag = fftData[(size_t) i] / (float) fftSize;
+            const float db  = juce::Decibels::gainToDecibels (mag, -120.0f);
+            float& s = specMag[(size_t) i];
+            s += (db >= s ? aAtk : aRel) * (db - s);
+        }
 
     const double sr   = proc.currentSampleRate.load();
     const double minF = 20.0, maxF = juce::jmax (1000.0, sr * 0.5);
-    const float  topDb = 6.0f, botDb = -96.0f;
+    const float  topDb = 0.0f, botDb = -90.0f; // Pro-Q-style framing
+    const int    width = juce::jmax (2, (int) b.getWidth());
+    const double logMin = std::log10 (minF), logMax = std::log10 (maxF);
     auto freqToX = [&] (double f) -> float
     {
-        const double t = (std::log10 (juce::jlimit (minF, maxF, f)) - std::log10 (minF))
-                       / (std::log10 (maxF) - std::log10 (minF));
+        const double t = (std::log10 (juce::jlimit (minF, maxF, f)) - logMin) / (logMax - logMin);
         return (float) (b.getX() + t * b.getWidth());
     };
     auto dbToY = [&] (float db) -> float
@@ -486,42 +499,90 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
         return b.getY() + juce::jlimit (0.0f, 1.0f, t) * b.getHeight();
     };
 
-    // grid + labels
+    // ---- rebuild per-column lookup tables only when width / sample-rate / FFT size change ----
+    if (lutWidth != width || lutSr != sr || lutFftSize != fftSize)
+    {
+        lutWidth = width; lutSr = sr; lutFftSize = fftSize;
+        binStart.assign ((size_t) (width + 1), 1);
+        tiltLut.assign  ((size_t) width, 0.0f);
+        for (int x = 0; x <= width; ++x)
+        {
+            const double f = std::pow (10.0, logMin + ((double) x / width) * (logMax - logMin));
+            binStart[(size_t) x] = juce::jlimit (1, numBins - 1, (int) (f * (double) fftSize / sr));
+            if (x < width) tiltLut[(size_t) x] = 4.5f * (float) std::log2 (juce::jmax (1.0, f) / 1000.0); // +4.5 dB/oct @ 1k
+        }
+        // Constant-Q smoothing: columns are log-spaced, so a fixed-pixel Gaussian == a fixed
+        // fraction of an octave. sigma = 1/12 octave in pixels (single precomputed kernel).
+        const double pxPerOct = (double) width / std::log2 (maxF / minF);
+        const double sigma = juce::jmax (0.75, pxPerOct / 12.0);
+        const int radius = juce::jlimit (1, 96, (int) std::ceil (3.0 * sigma));
+        gaussKernel.assign ((size_t) (2 * radius + 1), 0.0f);
+        double sum = 0.0;
+        for (int k = -radius; k <= radius; ++k) { const double w = std::exp (-0.5 * (k / sigma) * (k / sigma)); gaussKernel[(size_t) (k + radius)] = (float) w; sum += w; }
+        for (auto& w : gaussKernel) w = (float) ((double) w / sum);
+        colDb.assign ((size_t) width, botDb);
+        colSmooth.assign ((size_t) width, botDb);
+    }
+
+    // ---- aggregate FFT bins -> one dB per display column (MAX power keeps tonal peaks), then
+    //      add the spectral tilt. Columns with < 1 bin (the low end) interpolate for smoothness. ----
+    for (int x = 0; x < width; ++x)
+    {
+        const int b0 = binStart[(size_t) x];
+        const int b1 = juce::jmax (b0 + 1, binStart[(size_t) (x + 1)]);
+        float v;
+        if (b1 - b0 <= 1)
+        {
+            const double f  = std::pow (10.0, logMin + ((double) x / width) * (logMax - logMin));
+            const double fb = f * (double) fftSize / sr;
+            const int    i0 = juce::jlimit (1, numBins - 2, (int) fb);
+            const float  fr = (float) (fb - (double) i0);
+            v = specMag[(size_t) i0] * (1.0f - fr) + specMag[(size_t) (i0 + 1)] * fr;
+        }
+        else
+        {
+            float mx = -200.0f;
+            for (int i = b0; i < b1 && i < numBins; ++i) mx = juce::jmax (mx, specMag[(size_t) i]); // max dB == max power
+            v = mx;
+        }
+        colDb[(size_t) x] = v + tiltLut[(size_t) x];
+    }
+
+    // ---- constant-Q smoothing: Gaussian over the log-spaced columns ----
+    const int radius = ((int) gaussKernel.size() - 1) / 2;
+    for (int x = 0; x < width; ++x)
+    {
+        float acc = 0.0f;
+        for (int k = -radius; k <= radius; ++k)
+            acc += colDb[(size_t) juce::jlimit (0, width - 1, x + k)] * gaussKernel[(size_t) (k + radius)];
+        colSmooth[(size_t) x] = acc;
+    }
+
+    // ---- grid + labels (18 dB divisions over the 0..-90 window) ----
     g.setColour (juce::Colours::white.withAlpha (0.06f));
     const double fl[] = { 50,100,200,500,1000,2000,5000,10000,20000 };
     for (double f : fl) if (f < maxF) g.drawVerticalLine ((int) freqToX (f), b.getY(), b.getBottom());
-    for (float db = topDb; db >= botDb; db -= 24.0f) g.drawHorizontalLine ((int) dbToY (db), b.getX(), b.getRight());
+    for (float db = topDb; db >= botDb; db -= 18.0f) g.drawHorizontalLine ((int) dbToY (db), b.getX(), b.getRight());
     g.setColour (juce::Colour (0xff6a717a));
     g.setFont (juce::Font (juce::FontOptions (9.0f)));
     const char* fLbl[] = { "100", "1k", "10k" }; const double fVal[] = { 100, 1000, 10000 };
     for (int k = 0; k < 3; ++k) if (fVal[k] < maxF)
         g.drawText (fLbl[k], (int) freqToX (fVal[k]) - 13, (int) b.getBottom() - 13, 26, 12, juce::Justification::centred);
-    for (float db = topDb - 24.0f; db >= botDb; db -= 24.0f)
-        g.drawText (juce::String ((int) db), 4, (int) dbToY (db) - 6, 30, 12, juce::Justification::left);
 
-    // spectrum curve + fill
-    juce::Path curve;
-    bool started = false;
-    for (int i = 1; i < numBins; ++i)
-    {
-        const double f = (double) i * sr / (double) fftSize;
-        if (f < minF) continue;
-        if (f > maxF) break;
-        const float x = freqToX (f);
-        const float y = dbToY (specMag[(size_t) i]);
-        if (! started) { curve.startNewSubPath (x, y); started = true; }
-        else           curve.lineTo (x, y);
-    }
-    if (started)
-    {
-        juce::Path fillP = curve;
-        fillP.lineTo (b.getRight(), b.getBottom());
-        fillP.lineTo (freqToX (minF), b.getBottom());
-        fillP.closeSubPath();
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0x40ff8a2b), 0.0f, b.getY(),
-                                                 juce::Colour (0x00ff8a2b), 0.0f, b.getBottom(), false));
-        g.fillPath (fillP);
-        g.setColour (juce::Colour (0xffff8a2b));
-        g.strokePath (curve, juce::PathStrokeType (1.6f));
-    }
+    // ---- curve (one point per column) + subtle fill. Both Paths are members reused via
+    //      clearQuick() so paint() makes no per-frame heap allocation. ----
+    specPath.clear();
+    specFill.clear();
+    specPath.startNewSubPath (b.getX(), dbToY (colSmooth[0]));
+    for (int x = 1; x < width; ++x) specPath.lineTo (b.getX() + (float) x, dbToY (colSmooth[(size_t) x]));
+    specFill.startNewSubPath (b.getX(), dbToY (colSmooth[0]));
+    for (int x = 1; x < width; ++x) specFill.lineTo (b.getX() + (float) x, dbToY (colSmooth[(size_t) x]));
+    specFill.lineTo (b.getX() + (float) (width - 1), b.getBottom());
+    specFill.lineTo (b.getX(), b.getBottom());
+    specFill.closeSubPath();
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0x20ff8a2b), 0.0f, b.getY(),
+                                             juce::Colour (0x00ff8a2b), 0.0f, b.getBottom(), false));
+    g.fillPath (specFill);
+    g.setColour (juce::Colour (0xffff8a2b));
+    g.strokePath (specPath, juce::PathStrokeType (1.5f));
 }

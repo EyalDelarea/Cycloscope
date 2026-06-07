@@ -52,11 +52,20 @@ private:
     int prevSweep = -1;
 
     // Spectrum (FFT) mode
-    static constexpr int kFftOrder = 11;        // 2048-point FFT
+    static constexpr int kFftOrder = 12;        // 4096-point FFT (~10.7 Hz bins @ 44.1k)
     juce::dsp::FFT fft { kFftOrder };
     juce::dsp::WindowingFunction<float> fftWindow { 1 << kFftOrder, juce::dsp::WindowingFunction<float>::hann };
-    std::vector<float> fftData;                 // 2*fftSize working buffer
-    std::vector<float> specMag;                 // smoothed magnitude (dB) per bin
+    std::vector<float> fftData;                 // 2*fftSize working buffer (preallocated)
+    std::vector<float> specMag;                 // smoothed magnitude (dB) per bin (ballistics state)
+
+    // Per-pixel spectrum scratch + cached lookup tables (rebuilt only when w/sr/fftSize change).
+    std::vector<float> colDb, colSmooth;        // per-display-column dB (aggregated, then smoothed)
+    std::vector<int>   binStart;                // first FFT bin mapped to each column (>=1, skips DC)
+    std::vector<float> tiltLut;                 // +dB tilt per column (precomputed from its frequency)
+    std::vector<float> gaussKernel;             // fixed constant-Q (octave-width) smoothing kernel
+    juce::Path         specPath, specFill;      // reused each frame (clear()) -> no per-frame alloc
+    int    lutWidth = 0; double lutSr = 0.0; int lutFftSize = 0; // dirty-check keys
+    double lastSpecMs = 0.0;                     // for frame-rate-independent ballistics
 
     juce::Image gridCache;                      // cached static grid layer (perf)
     bool gridBaseCached = false;
