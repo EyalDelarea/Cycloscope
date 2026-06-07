@@ -1,0 +1,17 @@
+# Build output
+build/
+cmake-build-*/
+dist/
+
+# macOS
+.DS_Store
+*.DS_Store
+
+# Tooling / scratch
+.superpowers/
+.playwright-mcp/
+*.tmp
+
+# IDE
+.vscode/
+.idea/

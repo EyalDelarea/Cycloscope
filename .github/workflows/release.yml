@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]            # e.g. v0.1.0
+  workflow_dispatch:
+
+permissions:
+  contents: write            # required to create the GitHub Release
+
+jobs:
+  macos:
+    name: macOS (VST3 + AU + Standalone, unsigned)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & build (universal Release)
+        run: |
+          cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j3
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package (zip + pkg + checksums)
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"; [ "$VERSION" != "$GITHUB_REF_NAME" ] || VERSION="0.0.0-dev"
+          mkdir -p dist stage
+          cp -R "$(find build -type d -name 'Cycloscope.vst3'      | head -1)" stage/
+          cp -R "$(find build -type d -name 'Cycloscope.component' | head -1)" stage/
+          APP="$(find build -type d -name 'Cycloscope.app' | head -1)"; [ -n "$APP" ] && cp -R "$APP" stage/
+          xattr -cr stage
+          ( cd stage && zip -r -q "$GITHUB_WORKSPACE/dist/Cycloscope-${VERSION}-macOS.zip" . )
+          VERSION="$VERSION" scripts/package.sh
+          [ -f "dist/Cycloscope-${VERSION}.pkg" ] && mv "dist/Cycloscope-${VERSION}.pkg" "dist/Cycloscope-${VERSION}-macOS.pkg"
+          ( cd dist && shasum -a 256 Cycloscope-*-macOS.* > SHA256SUMS-macOS.txt && cat SHA256SUMS-macOS.txt )
+
+      - name: Publish (creates the release, with notes)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ### Install
+            Binaries here are **unsigned / not notarized** — this is expected. See the
+            [installation instructions](https://github.com/EyalDelarea/Cycloscope#installation),
+            and verify your download against the `SHA256SUMS-*.txt` files.
+          files: |
+            dist/Cycloscope-*-macOS.zip
+            dist/Cycloscope-*-macOS.pkg
+            dist/SHA256SUMS-macOS.txt
+
+  windows:
+    name: Windows (VST3 + Standalone, unsigned)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & build (Release)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release -j
+
+      - name: Unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package (zip + checksum)
+        shell: pwsh
+        run: |
+          $ver = "${env:GITHUB_REF_NAME}" -replace '^v',''
+          if (-not $ver) { $ver = "0.0.0-dev" }
+          New-Item -ItemType Directory -Force dist,stage | Out-Null
+          $vst3 = Get-ChildItem -Recurse -Directory -Filter Cycloscope.vst3 build | Select-Object -First 1
+          Copy-Item -Recurse $vst3.FullName stage\
+          $exe = Get-ChildItem -Recurse -Filter Cycloscope.exe build | Select-Object -First 1
+          if ($exe) { Copy-Item $exe.FullName stage\ }
+          Compress-Archive -Path stage\* -DestinationPath "dist\Cycloscope-$ver-Windows.zip" -Force
+          $h = (Get-FileHash "dist\Cycloscope-$ver-Windows.zip" -Algorithm SHA256).Hash.ToLower()
+          "$h  Cycloscope-$ver-Windows.zip" | Out-File -Encoding ascii dist\SHA256SUMS-Windows.txt
+          Get-Content dist\SHA256SUMS-Windows.txt
+
+      - name: Publish (appends Windows assets)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Cycloscope-*-Windows.zip
+            dist/SHA256SUMS-Windows.txt
