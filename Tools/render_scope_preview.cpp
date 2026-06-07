@@ -32,17 +32,24 @@ static void renderTrace (juce::Graphics& g, const std::vector<float>& sig,
                                              juce::Colour (0x00ff8a2b), 0.0f, midY, false));
     g.fillPath (fill);
 
-    juce::Path band = top;
-    for (int x = width - 1; x >= 0; --x) band.lineTo ((float) x, yLo[(size_t) x]);
-    band.closeSubPath();
-    g.setColour (juce::Colour (0x59ff8a2b));
-    g.fillPath (band);
-
-    const juce::Path bot = edge (yLo);
-    g.setColour (juce::Colour (0x33ff8a2b)); g.strokePath (top, juce::PathStrokeType (3.0f));
-    g.setColour (juce::Colour (0xffff8a2b));
-    g.strokePath (top, juce::PathStrokeType (1.8f));
-    g.strokePath (bot, juce::PathStrokeType (1.8f));
+    // Mirror ScopeComponent::paint: adaptive band vs line by envelope thickness.
+    float maxBand = 0.0f;
+    for (int x = 0; x < width; ++x) maxBand = juce::jmax (maxBand, std::abs (yHi[(size_t) x] - yLo[(size_t) x]));
+    if (maxBand >= 2.0f)
+    {
+        juce::Path band = top;
+        for (int x = width - 1; x >= 0; --x) band.lineTo ((float) x, yLo[(size_t) x]);
+        band.closeSubPath();
+        g.setColour (juce::Colour (0x59ff8a2b)); g.fillPath (band);
+        g.setColour (juce::Colour (0xffff8a2b));
+        g.strokePath (top, juce::PathStrokeType (1.0f));
+        g.strokePath (edge (yLo), juce::PathStrokeType (1.0f));
+    }
+    else
+    {
+        g.setColour (juce::Colour (0x33ff8a2b)); g.strokePath (top, juce::PathStrokeType (3.0f));
+        g.setColour (juce::Colour (0xffff8a2b)); g.strokePath (top, juce::PathStrokeType (1.8f));
+    }
 }
 
 int main()
