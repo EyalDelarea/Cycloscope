@@ -41,7 +41,8 @@ private:
     std::vector<float> yHiR, yLoR;   // right-channel overlay for the Stereo source
     bool stereoTrace = false;
     bool hasHeld = false;
-    bool unstable = false;
+    bool unstable = false;    // genuinely unpitched (Base Shape: "no single cycle")
+    bool cyclesMorph = false; // pitched but non-repeating (supersaw/unison) -> animate latest cycle
     float lastFreq = 0.0f;
     float lastClarity = 0.0f;
     float liveVpp = 0.0f;   // Live measurement: peak-to-peak

@@ -58,6 +58,31 @@ inline float detectPeriod (const float* buf, int numSamples, double sampleRate,
     return detectPeriodMPM (buf, numSamples, sampleRate, minHz, maxHz);
 }
 
+// Cycle self-similarity: normalised autocorrelation at a lag of k whole periods (k chosen to
+// fit the buffer, up to maxPeriods). ~1.0 for a TRULY periodic signal (single oscillator /
+// wavetable -- its waveform still matches itself many cycles later); drops well below for a
+// detuned ensemble (supersaw / unison) whose oscillators drift apart so cycles decorrelate
+// over time. This is what distinguishes "one repeating shape" from "morphing" -- pitch
+// clarity cannot (a supersaw is strongly pitched). Returns 1.0 when the buffer holds < 2
+// periods (not enough evidence -> assume periodic). Pure C++, headlessly testable.
+inline float cycleSelfSimilarity (const float* buf, int n, float period, int maxPeriods = 8) noexcept
+{
+    if (buf == nullptr || period <= 1.0f || n <= 0) return 1.0f;
+    int k = (int) ((double) n / (double) period) - 1;
+    if (k > maxPeriods) k = maxPeriods;
+    if (k < 2) return 1.0f; // can't judge with < 2 periods of separation
+    const int lag = (int) ((double) k * (double) period + 0.5);
+    if (lag <= 0 || lag >= n) return 1.0f;
+    double num = 0.0, e0 = 0.0, e1 = 0.0; const int lim = n - lag;
+    for (int i = 0; i < lim; ++i)
+    {
+        const double a = (double) buf[i], b = (double) buf[i + lag];
+        num += a * b; e0 += a * a; e1 += b * b;
+    }
+    const double d = std::sqrt (e0 * e1);
+    return d > 1e-12 ? (float) (num / d) : 1.0f;
+}
+
 // Period + clarity (NSDF peak height, 0..1) in one pass.
 struct PitchResult { float period; float clarity; };
 inline PitchResult detectPitch (const float* buf, int numSamples, double sampleRate,

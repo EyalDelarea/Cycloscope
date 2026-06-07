@@ -116,3 +116,7 @@ add_test(NAME stereoutils COMMAND test_stereoutils)
 add_executable(test_scopereduce Tests/test_scopereduce.cpp)
 target_include_directories(test_scopereduce PRIVATE Source)
 add_test(NAME scopereduce COMMAND test_scopereduce)
+
+add_executable(test_cyclesim Tests/test_cyclesim.cpp)
+target_include_directories(test_cyclesim PRIVATE Source)
+add_test(NAME cyclesim COMMAND test_cyclesim)
