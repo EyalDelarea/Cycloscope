@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_opengl/juce_opengl.h>
 #include "PluginProcessor.h"
 #include "ScopeComponent.h"
 #include "GoniometerComponent.h"
@@ -88,5 +89,10 @@ private:
     int controlBarTop = 0, controlBarBottom = 0;
 
     int shownMode = -1;
+
+    // GPU rendering: attaching a context moves rasterization of the (constantly redrawn,
+    // path-heavy) analyzer off the CPU, so it stays smooth on large/ultrawide windows.
+    juce::OpenGLContext openGLContext;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CycloscopeEditor)
 };

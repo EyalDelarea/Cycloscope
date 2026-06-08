@@ -28,8 +28,14 @@ ScopeComponent::~ScopeComponent() { stopTimer(); }
 void ScopeComponent::timerCallback()
 {
     const bool frozen = proc.apvts.getRawParameterValue ("freeze")->load() > 0.5f;
-    if (! frozen)
-        repaint();
+    if (frozen) return; // hold the current frame
+
+    // Spectrum: run the FFT + ballistics here (off the paint path) so analysis cadence
+    // is decoupled from rendering and a dropped paint can't corrupt the smoothing.
+    if ((int) proc.apvts.getRawParameterValue ("displayMode")->load() == 2)
+        analyse();
+
+    repaint();
 }
 
 void ScopeComponent::paint (juce::Graphics& g)
@@ -375,11 +381,19 @@ bool ScopeComponent::exportHeldCycle (const juce::File& file)
     return writer->writeFromAudioSampleBuffer (buf, 0, outLen);
 }
 
-void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
+void ScopeComponent::analyse()
 {
     const int fftSize = 1 << kFftOrder;
     const int numBins = fftSize / 2;
-    g.fillAll (juce::Colour (0xff0e1114));
+
+    if ((int) specBuf[0].size() != numBins)
+    {
+        specBuf[0].assign ((size_t) numBins, -120.0f);
+        specBuf[1].assign ((size_t) numBins, -120.0f);
+        specFront.store (-1, std::memory_order_release);
+        specBack = 0;
+        lastAnalyseMs = 0.0;
+    }
 
     // windowed mono FFT
     fftData.assign ((size_t) (2 * fftSize), 0.0f);
@@ -387,15 +401,36 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
     fftWindow.multiplyWithWindowingTable (fftData.data(), (size_t) fftSize);
     fft.performFrequencyOnlyForwardTransform (fftData.data()); // magnitudes [0..numBins]
 
-    if ((int) specMag.size() != numBins) specMag.assign ((size_t) numBins, -120.0f);
-    const bool frozen = proc.apvts.getRawParameterValue ("freeze")->load() > 0.5f;
+    // Per-bin ballistics: instant attack (peaks register immediately), slow time-based
+    // release (smooth, readable decay). releaseCoeff derives from the *actual* elapsed
+    // time so the feel is identical regardless of frame rate / CPU load.
+    const int front = specFront.load (std::memory_order_acquire);
+    const float* prev = (front >= 0) ? specBuf[(size_t) front].data() : nullptr;
+    float* out = specBuf[(size_t) specBack].data();
+
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const double dt  = (lastAnalyseMs > 0.0) ? (now - lastAnalyseMs) * 0.001 : 0.0;
+    lastAnalyseMs = now;
+    constexpr double kReleaseTau = 0.35; // seconds to ~63% — the "good spot", not user-exposed
+    const float rel = (prev != nullptr && dt > 0.0) ? (float) (1.0 - std::exp (-dt / kReleaseTau)) : 1.0f;
+
     for (int i = 0; i < numBins; ++i)
     {
         const float mag = fftData[(size_t) i] / (float) fftSize;
-        const float db  = juce::Decibels::gainToDecibels (mag, -120.0f);
-        specMag[(size_t) i] = frozen ? specMag[(size_t) i]
-                                     : specMag[(size_t) i] * 0.7f + db * 0.3f; // temporal smoothing
+        const float ndb = juce::Decibels::gainToDecibels (mag, -120.0f);
+        if (prev == nullptr || ndb >= prev[(size_t) i]) out[(size_t) i] = ndb;            // instant attack
+        else out[(size_t) i] = prev[(size_t) i] + (ndb - prev[(size_t) i]) * rel;          // slow release
     }
+
+    specFront.store (specBack, std::memory_order_release); // publish
+    specBack = 1 - specBack;
+}
+
+void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
+{
+    const int fftSize = 1 << kFftOrder;
+    const int numBins = fftSize / 2;
+    g.fillAll (juce::Colour (0xff0e1114));
 
     const double sr   = proc.currentSampleRate.load();
     const double minF = 20.0, maxF = juce::jmax (1000.0, sr * 0.5);
@@ -405,6 +440,11 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
         const double t = (std::log10 (juce::jlimit (minF, maxF, f)) - std::log10 (minF))
                        / (std::log10 (maxF) - std::log10 (minF));
         return (float) (b.getX() + t * b.getWidth());
+    };
+    auto xToFreq = [&] (float x) -> double
+    {
+        const double t = juce::jlimit (0.0, 1.0, (double) (x - b.getX()) / (double) b.getWidth());
+        return minF * std::pow (maxF / minF, t);
     };
     auto dbToY = [&] (float db) -> float
     {
@@ -425,24 +465,35 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
     for (float db = topDb - 24.0f; db >= botDb; db -= 24.0f)
         g.drawText (juce::String ((int) db), 4, (int) dbToY (db) - 6, 30, 12, juce::Justification::left);
 
-    // spectrum curve + fill
+    const int front = specFront.load (std::memory_order_acquire);
+    if (front < 0) return; // nothing analysed yet
+    const float* mag = specBuf[(size_t) front].data();
+
+    // Per-pixel log resampling: one vertex per pixel column, peak-aggregating the FFT bins
+    // that fall in that column's frequency span. Bounded by pixel width (not bin count),
+    // so the dense top end no longer overdraws/jaggies and the sparse low end no longer blocks.
+    const int xL = juce::jmax ((int) b.getX(),        (int) std::ceil  (freqToX (minF)));
+    const int xR = juce::jmin ((int) b.getRight() - 1, (int) std::floor (freqToX (maxF)));
     juce::Path curve;
     bool started = false;
-    for (int i = 1; i < numBins; ++i)
+    for (int x = xL; x <= xR; ++x)
     {
-        const double f = (double) i * sr / (double) fftSize;
-        if (f < minF) continue;
-        if (f > maxF) break;
-        const float x = freqToX (f);
-        const float y = dbToY (specMag[(size_t) i]);
-        if (! started) { curve.startNewSubPath (x, y); started = true; }
-        else           curve.lineTo (x, y);
+        const double fLo = xToFreq ((float) x - 0.5f);
+        const double fHi = xToFreq ((float) x + 0.5f);
+        int bLo = juce::jlimit (1, numBins - 1, (int) std::floor (fLo * (double) fftSize / sr));
+        int bHi = juce::jlimit (1, numBins - 1, (int) std::ceil  (fHi * (double) fftSize / sr));
+        if (bHi < bLo) bHi = bLo;
+        float peak = -120.0f;
+        for (int i = bLo; i <= bHi; ++i) peak = juce::jmax (peak, mag[(size_t) i]);
+        const float y = dbToY (peak);
+        if (! started) { curve.startNewSubPath ((float) x, y); started = true; }
+        else           curve.lineTo ((float) x, y);
     }
     if (started)
     {
         juce::Path fillP = curve;
-        fillP.lineTo (b.getRight(), b.getBottom());
-        fillP.lineTo (freqToX (minF), b.getBottom());
+        fillP.lineTo ((float) xR, b.getBottom());
+        fillP.lineTo ((float) xL, b.getBottom());
         fillP.closeSubPath();
         g.setGradientFill (juce::ColourGradient (juce::Colour (0x40ff8a2b), 0.0f, b.getY(),
                                                  juce::Colour (0x00ff8a2b), 0.0f, b.getBottom(), false));

@@ -113,11 +113,28 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     setResizable (true, true);
     setResizeLimits (560, 340, 2400, 1400);
     setSize (processorRef.editorWidth.load(), processorRef.editorHeight.load());
+
+    // GPU-accelerate component rendering. Multisampling/pixel format must be set before
+    // attachTo. No custom OpenGLRenderer or continuous repainting: the context just
+    // accelerates the existing paint(), still driven by the scope's own timer.
+    {
+        juce::OpenGLPixelFormat pf;
+        pf.multisamplingLevel = 4;
+        openGLContext.setPixelFormat (pf);
+        openGLContext.setMultisamplingEnabled (true);
+        openGLContext.attachTo (*this);
+    }
+
     startTimerHz (15);
     applyMode ((int) processorRef.apvts.getRawParameterValue ("displayMode")->load());
 }
 
-CycloscopeEditor::~CycloscopeEditor() { stopTimer(); setLookAndFeel (nullptr); }
+CycloscopeEditor::~CycloscopeEditor()
+{
+    openGLContext.detach(); // stop the GL render thread before tearing down components
+    stopTimer();
+    setLookAndFeel (nullptr);
+}
 
 void CycloscopeEditor::timerCallback()
 {
