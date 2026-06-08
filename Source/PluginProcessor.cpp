@@ -54,9 +54,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CycloscopeProcessor::createL
     layout.add (std::make_unique<AudioParameterChoice> (
         ParameterID { "triggerSweep", 1 }, "Sweep",
         StringArray { "Auto", "Normal", "Single" }, 0));
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "stereoDecay", 1 }, "Decay",
-        NormalisableRange<float> { 0.0f, 0.995f, 0.005f }, 0.92f)); // up to ~2 s trails for reading a delay's field
+    // (Goniometer persistence is a fixed internal constant now — no user "Decay" parameter.)
     return layout;
 }
 

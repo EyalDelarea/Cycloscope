@@ -68,11 +68,10 @@ private:
     ModeToggle modeToggle;
 
     juce::ComboBox triggerBox, sourceBox, syncBox, sweepBox;
-    juce::Slider thresholdSlider, timeSlider, ampSlider, cyclesSlider, decaySlider;
+    juce::Slider thresholdSlider, timeSlider, ampSlider, cyclesSlider;
     juce::ToggleButton freezeButton { "" };
 
     LabeledControl sourceLC { "Source",    sourceBox };
-    LabeledControl decayLC { "Decay",     decaySlider };
     LabeledControl triggerLC { "Trigger",   triggerBox };
     LabeledControl syncLC { "Sync",      syncBox };
     LabeledControl sweepLC { "Sweep",     sweepBox };
@@ -83,7 +82,7 @@ private:
     LabeledControl freezeLC { "Freeze",    freezeButton };
 
     std::unique_ptr<ComboAttach>  triggerAttach, sourceAttach, syncAttach, sweepAttach;
-    std::unique_ptr<SliderAttach> thresholdAttach, timeAttach, ampAttach, cyclesAttach, decayAttach;
+    std::unique_ptr<SliderAttach> thresholdAttach, timeAttach, ampAttach, cyclesAttach;
     std::unique_ptr<ButtonAttach> freezeAttach;
 
     int groupOf (LabeledControl* lc) const;

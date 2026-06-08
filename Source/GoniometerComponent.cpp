@@ -76,10 +76,12 @@ void GoniometerComponent::paint (juce::Graphics& g)
     // Phosphor persistence: fade the prior frames and draw the new trace on top, so an
     // evolving stereo field (delay/reverb/widening) builds a readable envelope rather
     // than a single flickering frame. Decay 0 = no persistence (cleared each frame).
-    const float decay = juce::jlimit (0.0f, 0.995f, proc.apvts.getRawParameterValue ("stereoDecay")->load());
+    // Fixed, tuned persistence (no user control): short, clean trail (~0.3 s at 30 Hz) so
+    // the Lissajous reads crisply instead of smearing into a blob.
+    constexpr float kDecay = 0.78f;
     if (persistImage.getWidth() != getWidth() || persistImage.getHeight() != getHeight())
         persistImage = juce::Image (juce::Image::ARGB, juce::jmax (1, getWidth()), juce::jmax (1, getHeight()), true);
-    persistImage.multiplyAllAlphas (decay * decay); // running at 30 (not 60) Hz: square to keep the same wall-clock trail length
+    persistImage.multiplyAllAlphas (kDecay);
 
     if (rms >= GATE)
     {

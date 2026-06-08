@@ -80,10 +80,8 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     sweepBox.setTooltip ("Auto: free-run. Normal: only update on a trigger (hold otherwise). Single: capture one triggered frame (re-select to re-arm).");
     makeRotary (thresholdSlider); makeRotary (timeSlider);
     makeRotary (ampSlider);       makeRotary (cyclesSlider);
-    makeRotary (decaySlider);
-    decaySlider.setTooltip ("Goniometer persistence: higher = longer-lasting trails for reading an evolving stereo image (delay/reverb).");
 
-    for (auto* lc : { &sourceLC, &syncLC, &triggerLC, &sweepLC, &thresholdLC, &timeLC, &ampLC, &cyclesLC, &decayLC, &freezeLC })
+    for (auto* lc : { &sourceLC, &syncLC, &triggerLC, &sweepLC, &thresholdLC, &timeLC, &ampLC, &cyclesLC, &freezeLC })
         addAndMakeVisible (lc);
 
     triggerAttach   = std::make_unique<ComboAttach>  (p.apvts, "triggerMode",   triggerBox);
@@ -94,7 +92,6 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     timeAttach      = std::make_unique<SliderAttach> (p.apvts, "timeZoom",    timeSlider);
     ampAttach       = std::make_unique<SliderAttach> (p.apvts, "ampZoom",     ampSlider);
     cyclesAttach    = std::make_unique<SliderAttach> (p.apvts, "cycles",      cyclesSlider);
-    decayAttach     = std::make_unique<SliderAttach> (p.apvts, "stereoDecay", decaySlider);
     freezeAttach    = std::make_unique<ButtonAttach> (p.apvts, "freeze",      freezeButton);
 
     // Clean value formatting. Set AFTER the attachments: a SliderAttachment resets the
@@ -104,8 +101,7 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     timeSlider.textFromValueFunction      = [] (double v) { return juce::String (v, 1) + " /px"; };
     ampSlider.textFromValueFunction       = [] (double v) { return juce::String (v, 2) + "×"; };
     cyclesSlider.textFromValueFunction    = [] (double v) { return juce::String ((int) v); };
-    decaySlider.textFromValueFunction     = [] (double v) { return juce::String (juce::roundToInt (v * 100.0)) + "%"; };
-    for (auto* s : { &thresholdSlider, &timeSlider, &ampSlider, &cyclesSlider, &decaySlider })
+    for (auto* s : { &thresholdSlider, &timeSlider, &ampSlider, &cyclesSlider })
         s->updateText();
 
     triggerBox.setTooltip      ("When the trace restarts: Free scrolls; Rising/Falling lock to a threshold crossing.");
@@ -162,7 +158,6 @@ void CycloscopeEditor::applyMode (int modeIdx)
     shownMode = modeIdx;
     const bool live = (modeIdx == 0);
     sourceLC.setVisible (true);   // channel source applies to both Live and Base Shape
-    decayLC.setVisible (true);    // goniometer persistence is always-on
     triggerLC.setVisible (live);
     syncLC.setVisible (live);
     sweepLC.setVisible (live);
@@ -186,7 +181,6 @@ int CycloscopeEditor::groupOf (LabeledControl* lc) const
     if (lc == &sourceLC  || lc == &syncLC) return 0;                                           // SIGNAL
     if (lc == &triggerLC || lc == &sweepLC || lc == &thresholdLC || lc == &timeLC || lc == &cyclesLC) return 1;  // TRIGGER / SHAPE
     if (lc == &ampLC) return 2;                                                                 // DISPLAY
-    if (lc == &decayLC) return 3;                                                               // STEREO
     return 4;                                                                                   // FREEZE
 }
 
@@ -229,7 +223,7 @@ void CycloscopeEditor::resized()
     scope.setBounds (r.reduced (12, 4));
 
     juce::Array<LabeledControl*> visible;
-    for (auto* lc : { &sourceLC, &syncLC, &triggerLC, &sweepLC, &thresholdLC, &timeLC, &cyclesLC, &ampLC, &decayLC, &freezeLC })
+    for (auto* lc : { &sourceLC, &syncLC, &triggerLC, &sweepLC, &thresholdLC, &timeLC, &cyclesLC, &ampLC, &freezeLC })
         if (lc->isVisible()) visible.add (lc);
 
     auto bar = controls.reduced (14, 8);
@@ -309,8 +303,8 @@ void CycloscopeEditor::applyFactory (int idx)
             setChoice ("displayMode", 1);   setChoice ("channelSource", 0); setInt ("cycles", 1);
             setBool   ("freeze", false);
             break;
-        case 2: // Stereo Field — stereo source with longer goniometer trails
-            setChoice ("displayMode", 0);   setChoice ("channelSource", 4); setFloat ("stereoDecay", 0.85f);
+        case 2: // Stereo Field — stereo source (goniometer persistence is fixed internally)
+            setChoice ("displayMode", 0);   setChoice ("channelSource", 4);
             break;
         case 3: // Spectrum — FFT analyzer
             setChoice ("displayMode", 2);   setChoice ("channelSource", 0);
