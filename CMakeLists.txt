@@ -54,6 +54,7 @@ target_link_libraries(Cycloscope
     Cycloscope_fonts
     juce::juce_audio_utils
     juce::juce_dsp
+    juce::juce_opengl
     PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags

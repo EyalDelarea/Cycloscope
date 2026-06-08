@@ -3,13 +3,16 @@
 
 GoniometerComponent::GoniometerComponent (CycloscopeProcessor& p) : proc (p)
 {
-    startTimerHz (60);
+    startTimerHz (30); // persistence trails don't need 60 Hz; halves this panel's render load
 }
 
 GoniometerComponent::~GoniometerComponent() { stopTimer(); }
 
 void GoniometerComponent::timerCallback()
 {
+    // When the panel is collapsed it is set invisible -> paint() never runs, so its full
+    // per-frame cost (4k-sample path + persistence image) disappears entirely.
+    if (! isVisible()) return;
     const bool frozen = proc.apvts.getRawParameterValue ("freeze")->load() > 0.5f;
     if (! frozen) repaint();
 }
@@ -73,10 +76,12 @@ void GoniometerComponent::paint (juce::Graphics& g)
     // Phosphor persistence: fade the prior frames and draw the new trace on top, so an
     // evolving stereo field (delay/reverb/widening) builds a readable envelope rather
     // than a single flickering frame. Decay 0 = no persistence (cleared each frame).
-    const float decay = juce::jlimit (0.0f, 0.995f, proc.apvts.getRawParameterValue ("stereoDecay")->load());
+    // Fixed, tuned persistence (no user control): short, clean trail (~0.3 s at 30 Hz) so
+    // the Lissajous reads crisply instead of smearing into a blob.
+    constexpr float kDecay = 0.78f;
     if (persistImage.getWidth() != getWidth() || persistImage.getHeight() != getHeight())
         persistImage = juce::Image (juce::Image::ARGB, juce::jmax (1, getWidth()), juce::jmax (1, getHeight()), true);
-    persistImage.multiplyAllAlphas (decay);
+    persistImage.multiplyAllAlphas (kDecay);
 
     if (rms >= GATE)
     {
@@ -86,15 +91,20 @@ void GoniometerComponent::paint (juce::Graphics& g)
         gonioGain += (target - gonioGain) * 0.18f;    // smooth across frames -> no size jitter
         const float s = gonioGain;
 
+        // Decimate the drawn trace: ~1024 points is plenty on this small panel and cuts
+        // the (software-rendered) path cost ~4x. Meter/correlation math above still uses
+        // all N samples, so accuracy is unchanged.
+        const int step = juce::jmax (1, N / 1024);
         juce::Path p;
-        p.preallocateSpace (N * 3);
-        for (int i = 0; i < N; ++i)
+        p.preallocateSpace ((N / step) * 3);
+        bool first = true;
+        for (int i = 0; i < N; i += step)
         {
             const float L = capL[(size_t) i], R = capR[(size_t) i];
             const float x = cx + ((R - L) * 0.5f) * s;
             const float y = cy - ((L + R) * 0.5f) * s;
-            if (i == 0) p.startNewSubPath (x, y);
-            else        p.lineTo (x, y);
+            if (first) { p.startNewSubPath (x, y); first = false; }
+            else       p.lineTo (x, y);
         }
         juce::Graphics ig (persistImage);
         ig.reduceClipRegion (juce::Rectangle<int> ((int) (cx - radius), (int) (cy - radius),

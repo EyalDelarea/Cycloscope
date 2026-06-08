@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_opengl/juce_opengl.h>
 #include "PluginProcessor.h"
 #include "ScopeComponent.h"
 #include "GoniometerComponent.h"
@@ -44,6 +45,7 @@ private:
 
     void timerCallback() override;
     void applyMode (int modeIdx);
+    void setGonioShown (bool shown); // collapse/expand the stereo panel
     juce::Slider& makeRotary (juce::Slider& s);
 
     CycloscopeProcessor& processorRef;
@@ -54,6 +56,7 @@ private:
     DragHandle divider;
     juce::Label wordmark;
     juce::TextButton presetButton { "Presets" };
+    juce::TextButton stereoButton { "Stereo" }; // toggles the goniometer panel
     juce::TextButton capAButton { "A" }, capBButton { "B" }, clearButton { "Clr" }, exportButton { "Export" };
 
     void showPresetMenu();
@@ -65,11 +68,10 @@ private:
     ModeToggle modeToggle;
 
     juce::ComboBox triggerBox, sourceBox, syncBox, sweepBox;
-    juce::Slider thresholdSlider, timeSlider, ampSlider, cyclesSlider, decaySlider;
+    juce::Slider thresholdSlider, timeSlider, ampSlider, cyclesSlider;
     juce::ToggleButton freezeButton { "" };
 
     LabeledControl sourceLC { "Source",    sourceBox };
-    LabeledControl decayLC { "Decay",     decaySlider };
     LabeledControl triggerLC { "Trigger",   triggerBox };
     LabeledControl syncLC { "Sync",      syncBox };
     LabeledControl sweepLC { "Sweep",     sweepBox };
@@ -80,7 +82,7 @@ private:
     LabeledControl freezeLC { "Freeze",    freezeButton };
 
     std::unique_ptr<ComboAttach>  triggerAttach, sourceAttach, syncAttach, sweepAttach;
-    std::unique_ptr<SliderAttach> thresholdAttach, timeAttach, ampAttach, cyclesAttach, decayAttach;
+    std::unique_ptr<SliderAttach> thresholdAttach, timeAttach, ampAttach, cyclesAttach;
     std::unique_ptr<ButtonAttach> freezeAttach;
 
     int groupOf (LabeledControl* lc) const;
@@ -88,5 +90,10 @@ private:
     int controlBarTop = 0, controlBarBottom = 0;
 
     int shownMode = -1;
+
+    // GPU rendering: attaching a context moves rasterization of the (constantly redrawn,
+    // path-heavy) analyzer off the CPU, so it stays smooth on large/ultrawide windows.
+    juce::OpenGLContext openGLContext;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CycloscopeEditor)
 };

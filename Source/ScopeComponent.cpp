@@ -28,8 +28,14 @@ ScopeComponent::~ScopeComponent() { stopTimer(); }
 void ScopeComponent::timerCallback()
 {
     const bool frozen = proc.apvts.getRawParameterValue ("freeze")->load() > 0.5f;
-    if (! frozen)
-        repaint();
+    if (frozen) return; // hold the current frame
+
+    // Spectrum: run the FFT + ballistics here (off the paint path) so analysis cadence
+    // is decoupled from rendering and a dropped paint can't corrupt the smoothing.
+    if ((int) proc.apvts.getRawParameterValue ("displayMode")->load() == 2)
+        analyse();
+
+    repaint();
 }
 
 void ScopeComponent::paint (juce::Graphics& g)
@@ -375,11 +381,22 @@ bool ScopeComponent::exportHeldCycle (const juce::File& file)
     return writer->writeFromAudioSampleBuffer (buf, 0, outLen);
 }
 
-void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
+void ScopeComponent::analyse()
 {
     const int fftSize = 1 << kFftOrder;
     const int numBins = fftSize / 2;
-    g.fillAll (juce::Colour (0xff0e1114));
+    const double sr   = proc.currentSampleRate.load();
+
+    if ((int) displayedDb.size() != numBins)
+    {
+        displayedDb.assign ((size_t) numBins, -120.0f);
+        prefixSum.assign  ((size_t) numBins + 1, 0.0);
+        specBuf[0].assign ((size_t) numBins, -120.0f);
+        specBuf[1].assign ((size_t) numBins, -120.0f);
+        specFront.store (-1, std::memory_order_release);
+        specBack = 0;
+        lastAnalyseMs = 0.0;
+    }
 
     // windowed mono FFT
     fftData.assign ((size_t) (2 * fftSize), 0.0f);
@@ -387,24 +404,73 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
     fftWindow.multiplyWithWindowingTable (fftData.data(), (size_t) fftSize);
     fft.performFrequencyOnlyForwardTransform (fftData.data()); // magnitudes [0..numBins]
 
-    if ((int) specMag.size() != numBins) specMag.assign ((size_t) numBins, -120.0f);
-    const bool frozen = proc.apvts.getRawParameterValue ("freeze")->load() > 0.5f;
+    // Frame-rate-independent release coefficient (instant attack handled in the loop).
+    const bool   seed = (specFront.load (std::memory_order_acquire) < 0);
+    const double now  = juce::Time::getMillisecondCounterHiRes();
+    const double dt   = (lastAnalyseMs > 0.0) ? (now - lastAnalyseMs) * 0.001 : 0.0;
+    lastAnalyseMs = now;
+    constexpr double kReleaseTau = 0.35; // seconds to ~63% — the "good spot", not user-exposed
+    const float rel = (! seed && dt > 0.0) ? (float) (1.0 - std::exp (-dt / kReleaseTau)) : 1.0f;
+
+    // Pro-Q-style upward spectral tilt (slope), referenced at 1 kHz, so the displayed
+    // shape rises toward the highs instead of looking bottom-heavy.
+    constexpr double kTiltDbPerOct = 4.5;
+    const double invLog2 = 1.0 / std::log (2.0);
+    // Level calibration: our mag = |FFT|/fftSize with an un-compensated Hann window reads
+    // low, so the curve sat ~25 dB under Pro-Q's analyzer. Lift it to match. (Tunable.)
+    constexpr float kSpecOffsetDb = 24.0f;
+
     for (int i = 0; i < numBins; ++i)
     {
         const float mag = fftData[(size_t) i] / (float) fftSize;
-        const float db  = juce::Decibels::gainToDecibels (mag, -120.0f);
-        specMag[(size_t) i] = frozen ? specMag[(size_t) i]
-                                     : specMag[(size_t) i] * 0.7f + db * 0.3f; // temporal smoothing
+        float ndb = juce::Decibels::gainToDecibels (mag, -120.0f) + kSpecOffsetDb;
+        const double f = (double) i * sr / (double) fftSize;
+        if (f > 0.0) ndb += (float) (kTiltDbPerOct * std::log (f / 1000.0) * invLog2);
+        if (seed || ndb >= displayedDb[(size_t) i]) displayedDb[(size_t) i] = ndb;          // instant attack
+        else displayedDb[(size_t) i] += (ndb - displayedDb[(size_t) i]) * rel;              // slow release
     }
+
+    // Constant-Q frequency smoothing (±1/6 octave): denoise the curve like a premium
+    // analyzer without flattening peaks. O(n) via a prefix sum over the tilted dB.
+    prefixSum[0] = 0.0;
+    for (int i = 0; i < numBins; ++i)
+        prefixSum[(size_t) i + 1] = prefixSum[(size_t) i] + (double) displayedDb[(size_t) i];
+
+    constexpr double kSmoothOct = 1.0 / 12.0; // ~1 semitone: calm the inter-harmonic grass, keep harmonics
+    const double loMul = std::pow (2.0, -kSmoothOct);
+    const double hiMul = std::pow (2.0,  kSmoothOct);
+    float* out = specBuf[(size_t) specBack].data();
+    for (int i = 0; i < numBins; ++i)
+    {
+        int a = juce::jlimit (0, numBins - 1, (int) std::floor (i * loMul));
+        int b = juce::jlimit (0, numBins - 1, (int) std::ceil  (i * hiMul));
+        if (b < a) b = a;
+        out[(size_t) i] = (float) ((prefixSum[(size_t) b + 1] - prefixSum[(size_t) a]) / (double) (b - a + 1));
+    }
+
+    specFront.store (specBack, std::memory_order_release); // publish
+    specBack = 1 - specBack;
+}
+
+void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
+{
+    const int fftSize = 1 << kFftOrder;
+    const int numBins = fftSize / 2;
+    g.fillAll (juce::Colour (0xff0e1114));
 
     const double sr   = proc.currentSampleRate.load();
     const double minF = 20.0, maxF = juce::jmax (1000.0, sr * 0.5);
-    const float  topDb = 6.0f, botDb = -96.0f;
+    const float  topDb = 0.0f, botDb = -90.0f;  // match FabFilter Pro-Q's analyzer scale (0..-90 dB)
     auto freqToX = [&] (double f) -> float
     {
         const double t = (std::log10 (juce::jlimit (minF, maxF, f)) - std::log10 (minF))
                        / (std::log10 (maxF) - std::log10 (minF));
         return (float) (b.getX() + t * b.getWidth());
+    };
+    auto xToFreq = [&] (float x) -> double
+    {
+        const double t = juce::jlimit (0.0, 1.0, (double) (x - b.getX()) / (double) b.getWidth());
+        return minF * std::pow (maxF / minF, t);
     };
     auto dbToY = [&] (float db) -> float
     {
@@ -416,38 +482,66 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
     g.setColour (juce::Colours::white.withAlpha (0.06f));
     const double fl[] = { 50,100,200,500,1000,2000,5000,10000,20000 };
     for (double f : fl) if (f < maxF) g.drawVerticalLine ((int) freqToX (f), b.getY(), b.getBottom());
-    for (float db = topDb; db >= botDb; db -= 24.0f) g.drawHorizontalLine ((int) dbToY (db), b.getX(), b.getRight());
+    for (float db = topDb; db >= botDb; db -= 10.0f) g.drawHorizontalLine ((int) dbToY (db), b.getX(), b.getRight());
     g.setColour (juce::Colour (0xff6a717a));
     g.setFont (juce::Font (juce::FontOptions (9.0f)));
     const char* fLbl[] = { "100", "1k", "10k" }; const double fVal[] = { 100, 1000, 10000 };
     for (int k = 0; k < 3; ++k) if (fVal[k] < maxF)
         g.drawText (fLbl[k], (int) freqToX (fVal[k]) - 13, (int) b.getBottom() - 13, 26, 12, juce::Justification::centred);
-    for (float db = topDb - 24.0f; db >= botDb; db -= 24.0f)
+    for (float db = topDb - 10.0f; db >= botDb; db -= 10.0f)
         g.drawText (juce::String ((int) db), 4, (int) dbToY (db) - 6, 30, 12, juce::Justification::left);
 
-    // spectrum curve + fill
+    const int front = specFront.load (std::memory_order_acquire);
+    if (front < 0) return; // nothing analysed yet
+    const float* mag = specBuf[(size_t) front].data();
+
+    // Per-pixel log resampling: one vertex per pixel column, peak-aggregating the FFT bins
+    // that fall in that column's frequency span. Bounded by pixel width (not bin count),
+    // so the dense top end no longer overdraws/jaggies and the sparse low end no longer blocks.
+    const int xL = juce::jmax ((int) b.getX(),        (int) std::ceil  (freqToX (minF)));
+    const int xR = juce::jmin ((int) b.getRight() - 1, (int) std::floor (freqToX (maxF)));
     juce::Path curve;
     bool started = false;
-    for (int i = 1; i < numBins; ++i)
+    for (int x = xL; x <= xR; ++x)
     {
-        const double f = (double) i * sr / (double) fftSize;
-        if (f < minF) continue;
-        if (f > maxF) break;
-        const float x = freqToX (f);
-        const float y = dbToY (specMag[(size_t) i]);
-        if (! started) { curve.startNewSubPath (x, y); started = true; }
-        else           curve.lineTo (x, y);
+        const double fLo = xToFreq ((float) x - 0.5f);
+        const double fHi = xToFreq ((float) x + 0.5f);
+        const int bLo = juce::jlimit (1, numBins - 1, (int) std::floor (fLo * (double) fftSize / sr));
+        const int bHi = juce::jlimit (1, numBins - 1, (int) std::ceil  (fHi * (double) fftSize / sr));
+        float val;
+        if (bHi - bLo <= 1)
+        {
+            // sub-bin column (low freq): interpolate between bins so the bass is a smooth
+            // line, not the stair-steps that "max over one bin" produced.
+            const double bc = xToFreq ((float) x) * (double) fftSize / sr;
+            const int i0 = juce::jlimit (1, numBins - 1, (int) std::floor (bc));
+            const int i1 = juce::jmin (numBins - 1, i0 + 1);
+            const float fr = (float) juce::jlimit (0.0, 1.0, bc - (double) i0);
+            val = mag[(size_t) i0] * (1.0f - fr) + mag[(size_t) i1] * fr;
+        }
+        else
+        {
+            // multi-bin column (high freq): take the PEAK bin in the span so harmonics show
+            // as crisp spikes (like Pro-Q), not an averaged-down blob. Temporal slow-release
+            // keeps this clean rather than noisy.
+            float peak = -200.0f;
+            for (int i = bLo; i <= bHi; ++i) peak = juce::jmax (peak, mag[(size_t) i]);
+            val = peak;
+        }
+        const float y = dbToY (val);
+        if (! started) { curve.startNewSubPath ((float) x, y); started = true; }
+        else           curve.lineTo ((float) x, y);
     }
     if (started)
     {
         juce::Path fillP = curve;
-        fillP.lineTo (b.getRight(), b.getBottom());
-        fillP.lineTo (freqToX (minF), b.getBottom());
+        fillP.lineTo ((float) xR, b.getBottom());
+        fillP.lineTo ((float) xL, b.getBottom());
         fillP.closeSubPath();
         g.setGradientFill (juce::ColourGradient (juce::Colour (0x40ff8a2b), 0.0f, b.getY(),
                                                  juce::Colour (0x00ff8a2b), 0.0f, b.getBottom(), false));
         g.fillPath (fillP);
         g.setColour (juce::Colour (0xffff8a2b));
-        g.strokePath (curve, juce::PathStrokeType (1.6f));
+        g.strokePath (curve, juce::PathStrokeType (1.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 }

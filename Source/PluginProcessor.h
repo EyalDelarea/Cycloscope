@@ -38,6 +38,7 @@ public:
     std::atomic<int> editorWidth  { 1080 };
     std::atomic<int> editorHeight { 520 };
     std::atomic<int> gonioWidth   { 200 };
+    std::atomic<bool> gonioShown  { true };   // collapsible stereo panel: hidden = renders nothing
 
     juce::AudioProcessorValueTreeState apvts;
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();

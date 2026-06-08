@@ -39,6 +39,11 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     presetButton.onClick = [this] { showPresetMenu(); };
     addAndMakeVisible (presetButton);
 
+    stereoButton.setTooltip ("Show / hide the stereo goniometer panel. Hidden = it renders nothing (saves CPU).");
+    stereoButton.setClickingTogglesState (true);
+    stereoButton.onClick = [this] { setGonioShown (stereoButton.getToggleState()); };
+    addAndMakeVisible (stereoButton);
+
     // Single-cycle workbench: capture A/B for overlay compare + export wavetable WAV
     for (auto* b : { &capAButton, &capBButton, &clearButton, &exportButton })
         addAndMakeVisible (b);
@@ -75,10 +80,8 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     sweepBox.setTooltip ("Auto: free-run. Normal: only update on a trigger (hold otherwise). Single: capture one triggered frame (re-select to re-arm).");
     makeRotary (thresholdSlider); makeRotary (timeSlider);
     makeRotary (ampSlider);       makeRotary (cyclesSlider);
-    makeRotary (decaySlider);
-    decaySlider.setTooltip ("Goniometer persistence: higher = longer-lasting trails for reading an evolving stereo image (delay/reverb).");
 
-    for (auto* lc : { &sourceLC, &syncLC, &triggerLC, &sweepLC, &thresholdLC, &timeLC, &ampLC, &cyclesLC, &decayLC, &freezeLC })
+    for (auto* lc : { &sourceLC, &syncLC, &triggerLC, &sweepLC, &thresholdLC, &timeLC, &ampLC, &cyclesLC, &freezeLC })
         addAndMakeVisible (lc);
 
     triggerAttach   = std::make_unique<ComboAttach>  (p.apvts, "triggerMode",   triggerBox);
@@ -89,7 +92,6 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     timeAttach      = std::make_unique<SliderAttach> (p.apvts, "timeZoom",    timeSlider);
     ampAttach       = std::make_unique<SliderAttach> (p.apvts, "ampZoom",     ampSlider);
     cyclesAttach    = std::make_unique<SliderAttach> (p.apvts, "cycles",      cyclesSlider);
-    decayAttach     = std::make_unique<SliderAttach> (p.apvts, "stereoDecay", decaySlider);
     freezeAttach    = std::make_unique<ButtonAttach> (p.apvts, "freeze",      freezeButton);
 
     // Clean value formatting. Set AFTER the attachments: a SliderAttachment resets the
@@ -99,8 +101,7 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     timeSlider.textFromValueFunction      = [] (double v) { return juce::String (v, 1) + " /px"; };
     ampSlider.textFromValueFunction       = [] (double v) { return juce::String (v, 2) + "×"; };
     cyclesSlider.textFromValueFunction    = [] (double v) { return juce::String ((int) v); };
-    decaySlider.textFromValueFunction     = [] (double v) { return juce::String (juce::roundToInt (v * 100.0)) + "%"; };
-    for (auto* s : { &thresholdSlider, &timeSlider, &ampSlider, &cyclesSlider, &decaySlider })
+    for (auto* s : { &thresholdSlider, &timeSlider, &ampSlider, &cyclesSlider })
         s->updateText();
 
     triggerBox.setTooltip      ("When the trace restarts: Free scrolls; Rising/Falling lock to a threshold crossing.");
@@ -113,11 +114,38 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     setResizable (true, true);
     setResizeLimits (560, 340, 2400, 1400);
     setSize (processorRef.editorWidth.load(), processorRef.editorHeight.load());
+
+    // GPU-accelerate component rendering. Multisampling/pixel format must be set before
+    // attachTo. No custom OpenGLRenderer or continuous repainting: the context just
+    // accelerates the existing paint(), still driven by the scope's own timer.
+    {
+        juce::OpenGLPixelFormat pf;
+        pf.multisamplingLevel = 4;
+        openGLContext.setPixelFormat (pf);
+        openGLContext.setMultisamplingEnabled (true);
+        openGLContext.attachTo (*this);
+    }
+
     startTimerHz (15);
+    setGonioShown (processorRef.gonioShown.load());
     applyMode ((int) processorRef.apvts.getRawParameterValue ("displayMode")->load());
 }
 
-CycloscopeEditor::~CycloscopeEditor() { stopTimer(); setLookAndFeel (nullptr); }
+void CycloscopeEditor::setGonioShown (bool shown)
+{
+    processorRef.gonioShown.store (shown);
+    stereoButton.setToggleState (shown, juce::dontSendNotification);
+    goniometer.setVisible (shown);
+    divider.setVisible (shown);
+    resized();
+}
+
+CycloscopeEditor::~CycloscopeEditor()
+{
+    openGLContext.detach(); // stop the GL render thread before tearing down components
+    stopTimer();
+    setLookAndFeel (nullptr);
+}
 
 void CycloscopeEditor::timerCallback()
 {
@@ -130,7 +158,6 @@ void CycloscopeEditor::applyMode (int modeIdx)
     shownMode = modeIdx;
     const bool live = (modeIdx == 0);
     sourceLC.setVisible (true);   // channel source applies to both Live and Base Shape
-    decayLC.setVisible (true);    // goniometer persistence is always-on
     triggerLC.setVisible (live);
     syncLC.setVisible (live);
     sweepLC.setVisible (live);
@@ -154,7 +181,6 @@ int CycloscopeEditor::groupOf (LabeledControl* lc) const
     if (lc == &sourceLC  || lc == &syncLC) return 0;                                           // SIGNAL
     if (lc == &triggerLC || lc == &sweepLC || lc == &thresholdLC || lc == &timeLC || lc == &cyclesLC) return 1;  // TRIGGER / SHAPE
     if (lc == &ampLC) return 2;                                                                 // DISPLAY
-    if (lc == &decayLC) return 3;                                                               // STEREO
     return 4;                                                                                   // FREEZE
 }
 
@@ -174,6 +200,7 @@ void CycloscopeEditor::resized()
     wordmark.setBounds (top.removeFromLeft (108).withTrimmedLeft (14));
     presetButton.setBounds (top.removeFromLeft (84).reduced (4, 9));
     modeToggle.setBounds (top.removeFromRight (220).reduced (6, 9));
+    stereoButton.setBounds (top.removeFromRight (74).reduced (4, 9));
 
     // Single-cycle workbench (Base Shape only), right-aligned with content-fit widths
     // so "Export" never truncates. Laid out right-to-left: Export | Clr | B | A.
@@ -187,13 +214,16 @@ void CycloscopeEditor::resized()
     }
 
     auto controls = r.removeFromBottom (92);
-    auto gonioStrip = r.removeFromRight (processorRef.gonioWidth.load()); // adjustable
-    goniometer.setBounds (gonioStrip.reduced (6, 4));
-    divider.setBounds (r.removeFromRight (7));
+    if (processorRef.gonioShown.load()) // collapsed -> scope takes the full width, panel renders nothing
+    {
+        auto gonioStrip = r.removeFromRight (processorRef.gonioWidth.load()); // adjustable
+        goniometer.setBounds (gonioStrip.reduced (6, 4));
+        divider.setBounds (r.removeFromRight (7));
+    }
     scope.setBounds (r.reduced (12, 4));
 
     juce::Array<LabeledControl*> visible;
-    for (auto* lc : { &sourceLC, &syncLC, &triggerLC, &sweepLC, &thresholdLC, &timeLC, &cyclesLC, &ampLC, &decayLC, &freezeLC })
+    for (auto* lc : { &sourceLC, &syncLC, &triggerLC, &sweepLC, &thresholdLC, &timeLC, &cyclesLC, &ampLC, &freezeLC })
         if (lc->isVisible()) visible.add (lc);
 
     auto bar = controls.reduced (14, 8);
@@ -273,8 +303,8 @@ void CycloscopeEditor::applyFactory (int idx)
             setChoice ("displayMode", 1);   setChoice ("channelSource", 0); setInt ("cycles", 1);
             setBool   ("freeze", false);
             break;
-        case 2: // Stereo Field — stereo source with longer goniometer trails
-            setChoice ("displayMode", 0);   setChoice ("channelSource", 4); setFloat ("stereoDecay", 0.85f);
+        case 2: // Stereo Field — stereo source (goniometer persistence is fixed internally)
+            setChoice ("displayMode", 0);   setChoice ("channelSource", 4);
             break;
         case 3: // Spectrum — FFT analyzer
             setChoice ("displayMode", 2);   setChoice ("channelSource", 0);

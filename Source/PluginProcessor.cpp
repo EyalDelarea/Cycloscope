@@ -54,9 +54,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CycloscopeProcessor::createL
     layout.add (std::make_unique<AudioParameterChoice> (
         ParameterID { "triggerSweep", 1 }, "Sweep",
         StringArray { "Auto", "Normal", "Single" }, 0));
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "stereoDecay", 1 }, "Decay",
-        NormalisableRange<float> { 0.0f, 0.995f, 0.005f }, 0.92f)); // up to ~2 s trails for reading a delay's field
+    // (Goniometer persistence is a fixed internal constant now — no user "Decay" parameter.)
     return layout;
 }
 
@@ -104,6 +102,7 @@ void CycloscopeProcessor::getStateInformation (juce::MemoryBlock& destData)
         xml->setAttribute ("editorWidth",  editorWidth.load());
         xml->setAttribute ("editorHeight", editorHeight.load());
         xml->setAttribute ("gonioWidth",   gonioWidth.load());
+        xml->setAttribute ("gonioShown",   gonioShown.load() ? 1 : 0);
         copyXmlToBinary (*xml, destData);
     }
 }
@@ -115,6 +114,7 @@ void CycloscopeProcessor::setStateInformation (const void* data, int sizeInBytes
         editorWidth.store  (xml->getIntAttribute ("editorWidth",  editorWidth.load()));
         editorHeight.store (xml->getIntAttribute ("editorHeight", editorHeight.load()));
         gonioWidth.store   (xml->getIntAttribute ("gonioWidth",   gonioWidth.load()));
+        gonioShown.store   (xml->getIntAttribute ("gonioShown",   gonioShown.load() ? 1 : 0) != 0);
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
     }
 }

@@ -3,6 +3,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include "PluginProcessor.h"
 #include <vector>
+#include <atomic>
 
 class ScopeComponent : public juce::Component, private juce::Timer
 {
@@ -25,6 +26,7 @@ private:
     void drawGrid (juce::Graphics& g, juce::Rectangle<float> b, bool baseShape);
     void ensureGrid (int w, int h, bool baseShape);
     void paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b);
+    void analyse(); // FFT + per-bin ballistics, runs on the timer (off the paint path)
     void buildLive (std::vector<float>& ys, int width, float midY, float halfH, float ampZoom);
     bool buildBaseShape (std::vector<float>& ys, int width, float midY, float halfH, float ampZoom);
     void copyLatestMono (float* dest, int numSamples);
@@ -47,11 +49,21 @@ private:
     int prevSweep = -1;
 
     // Spectrum (FFT) mode
-    static constexpr int kFftOrder = 11;        // 2048-point FFT
+    static constexpr int kFftOrder = 13;        // 8192-point FFT (Pro-Q "Maximum") — resolves harmonics
     juce::dsp::FFT fft { kFftOrder };
     juce::dsp::WindowingFunction<float> fftWindow { 1 << kFftOrder, juce::dsp::WindowingFunction<float>::hann };
     std::vector<float> fftData;                 // 2*fftSize working buffer
-    std::vector<float> specMag;                 // smoothed magnitude (dB) per bin
+
+    // Analysis output published to paint: a double buffer of per-bin dB written only by
+    // the timer (message thread) and read only by paint (GL render thread). specFront is
+    // the index of the readable buffer (-1 until the first analyse()); specBack is the
+    // one the timer writes next. The previous buffer doubles as the ballistic history.
+    std::vector<float> displayedDb;             // per-bin ballistic state (raw, timer thread only)
+    std::vector<double> prefixSum;              // scratch for O(n) constant-Q smoothing
+    std::vector<float> specBuf[2];              // published (tilted + smoothed) dB for paint
+    std::atomic<int> specFront { -1 };
+    int specBack = 0;
+    double lastAnalyseMs = 0.0;                  // for frame-rate-independent release ballistics
 
     juce::Image gridCache;                      // cached static grid layer (perf)
     bool gridBaseCached = false;
