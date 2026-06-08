@@ -49,7 +49,7 @@ private:
     int prevSweep = -1;
 
     // Spectrum (FFT) mode
-    static constexpr int kFftOrder = 12;        // 4096-point FFT (finer low-end than 2048)
+    static constexpr int kFftOrder = 13;        // 8192-point FFT (Pro-Q "Maximum") — resolves harmonics
     juce::dsp::FFT fft { kFftOrder };
     juce::dsp::WindowingFunction<float> fftWindow { 1 << kFftOrder, juce::dsp::WindowingFunction<float>::hann };
     std::vector<float> fftData;                 // 2*fftSize working buffer

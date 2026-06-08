@@ -433,7 +433,7 @@ void ScopeComponent::analyse()
     for (int i = 0; i < numBins; ++i)
         prefixSum[(size_t) i + 1] = prefixSum[(size_t) i] + (double) displayedDb[(size_t) i];
 
-    constexpr double kSmoothOct = 1.0 / 6.0;
+    constexpr double kSmoothOct = 1.0 / 24.0; // light: tame top-octave grass without blurring harmonics
     const double loMul = std::pow (2.0, -kSmoothOct);
     const double hiMul = std::pow (2.0,  kSmoothOct);
     float* out = specBuf[(size_t) specBack].data();
@@ -518,10 +518,12 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
         }
         else
         {
-            // multi-bin column (high freq): average the already-smoothed bins in the span.
-            float s = 0.0f;
-            for (int i = bLo; i <= bHi; ++i) s += mag[(size_t) i];
-            val = s / (float) (bHi - bLo + 1);
+            // multi-bin column (high freq): take the PEAK bin in the span so harmonics show
+            // as crisp spikes (like Pro-Q), not an averaged-down blob. Temporal slow-release
+            // keeps this clean rather than noisy.
+            float peak = -200.0f;
+            for (int i = bLo; i <= bHi; ++i) peak = juce::jmax (peak, mag[(size_t) i]);
+            val = peak;
         }
         const float y = dbToY (val);
         if (! started) { curve.startNewSubPath ((float) x, y); started = true; }
