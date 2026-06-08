@@ -433,7 +433,7 @@ void ScopeComponent::analyse()
     for (int i = 0; i < numBins; ++i)
         prefixSum[(size_t) i + 1] = prefixSum[(size_t) i] + (double) displayedDb[(size_t) i];
 
-    constexpr double kSmoothOct = 1.0 / 24.0; // light: tame top-octave grass without blurring harmonics
+    constexpr double kSmoothOct = 1.0 / 12.0; // ~1 semitone: calm the inter-harmonic grass, keep harmonics
     const double loMul = std::pow (2.0, -kSmoothOct);
     const double hiMul = std::pow (2.0,  kSmoothOct);
     float* out = specBuf[(size_t) specBack].data();
@@ -539,6 +539,6 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
                                                  juce::Colour (0x00ff8a2b), 0.0f, b.getBottom(), false));
         g.fillPath (fillP);
         g.setColour (juce::Colour (0xffff8a2b));
-        g.strokePath (curve, juce::PathStrokeType (1.6f));
+        g.strokePath (curve, juce::PathStrokeType (1.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 }
