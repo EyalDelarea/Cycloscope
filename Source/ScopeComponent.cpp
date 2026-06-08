@@ -457,7 +457,7 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
 
     const double sr   = proc.currentSampleRate.load();
     const double minF = 20.0, maxF = juce::jmax (1000.0, sr * 0.5);
-    const float  topDb = 24.0f, botDb = -96.0f; // widened headroom for the upward tilt
+    const float  topDb = 0.0f, botDb = -90.0f;  // match FabFilter Pro-Q's analyzer scale (0..-90 dB)
     auto freqToX = [&] (double f) -> float
     {
         const double t = (std::log10 (juce::jlimit (minF, maxF, f)) - std::log10 (minF))
@@ -479,13 +479,13 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
     g.setColour (juce::Colours::white.withAlpha (0.06f));
     const double fl[] = { 50,100,200,500,1000,2000,5000,10000,20000 };
     for (double f : fl) if (f < maxF) g.drawVerticalLine ((int) freqToX (f), b.getY(), b.getBottom());
-    for (float db = topDb; db >= botDb; db -= 24.0f) g.drawHorizontalLine ((int) dbToY (db), b.getX(), b.getRight());
+    for (float db = topDb; db >= botDb; db -= 10.0f) g.drawHorizontalLine ((int) dbToY (db), b.getX(), b.getRight());
     g.setColour (juce::Colour (0xff6a717a));
     g.setFont (juce::Font (juce::FontOptions (9.0f)));
     const char* fLbl[] = { "100", "1k", "10k" }; const double fVal[] = { 100, 1000, 10000 };
     for (int k = 0; k < 3; ++k) if (fVal[k] < maxF)
         g.drawText (fLbl[k], (int) freqToX (fVal[k]) - 13, (int) b.getBottom() - 13, 26, 12, juce::Justification::centred);
-    for (float db = topDb - 24.0f; db >= botDb; db -= 24.0f)
+    for (float db = topDb - 10.0f; db >= botDb; db -= 10.0f)
         g.drawText (juce::String ((int) db), 4, (int) dbToY (db) - 6, 30, 12, juce::Justification::left);
 
     const int front = specFront.load (std::memory_order_acquire);
