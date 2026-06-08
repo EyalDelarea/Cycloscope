@@ -39,6 +39,11 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     presetButton.onClick = [this] { showPresetMenu(); };
     addAndMakeVisible (presetButton);
 
+    stereoButton.setTooltip ("Show / hide the stereo goniometer panel. Hidden = it renders nothing (saves CPU).");
+    stereoButton.setClickingTogglesState (true);
+    stereoButton.onClick = [this] { setGonioShown (stereoButton.getToggleState()); };
+    addAndMakeVisible (stereoButton);
+
     // Single-cycle workbench: capture A/B for overlay compare + export wavetable WAV
     for (auto* b : { &capAButton, &capBButton, &clearButton, &exportButton })
         addAndMakeVisible (b);
@@ -126,7 +131,17 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     }
 
     startTimerHz (15);
+    setGonioShown (processorRef.gonioShown.load());
     applyMode ((int) processorRef.apvts.getRawParameterValue ("displayMode")->load());
+}
+
+void CycloscopeEditor::setGonioShown (bool shown)
+{
+    processorRef.gonioShown.store (shown);
+    stereoButton.setToggleState (shown, juce::dontSendNotification);
+    goniometer.setVisible (shown);
+    divider.setVisible (shown);
+    resized();
 }
 
 CycloscopeEditor::~CycloscopeEditor()
@@ -191,6 +206,7 @@ void CycloscopeEditor::resized()
     wordmark.setBounds (top.removeFromLeft (108).withTrimmedLeft (14));
     presetButton.setBounds (top.removeFromLeft (84).reduced (4, 9));
     modeToggle.setBounds (top.removeFromRight (220).reduced (6, 9));
+    stereoButton.setBounds (top.removeFromRight (74).reduced (4, 9));
 
     // Single-cycle workbench (Base Shape only), right-aligned with content-fit widths
     // so "Export" never truncates. Laid out right-to-left: Export | Clr | B | A.
@@ -204,9 +220,12 @@ void CycloscopeEditor::resized()
     }
 
     auto controls = r.removeFromBottom (92);
-    auto gonioStrip = r.removeFromRight (processorRef.gonioWidth.load()); // adjustable
-    goniometer.setBounds (gonioStrip.reduced (6, 4));
-    divider.setBounds (r.removeFromRight (7));
+    if (processorRef.gonioShown.load()) // collapsed -> scope takes the full width, panel renders nothing
+    {
+        auto gonioStrip = r.removeFromRight (processorRef.gonioWidth.load()); // adjustable
+        goniometer.setBounds (gonioStrip.reduced (6, 4));
+        divider.setBounds (r.removeFromRight (7));
+    }
     scope.setBounds (r.reduced (12, 4));
 
     juce::Array<LabeledControl*> visible;

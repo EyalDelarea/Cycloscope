@@ -45,6 +45,7 @@ private:
 
     void timerCallback() override;
     void applyMode (int modeIdx);
+    void setGonioShown (bool shown); // collapse/expand the stereo panel
     juce::Slider& makeRotary (juce::Slider& s);
 
     CycloscopeProcessor& processorRef;
@@ -55,6 +56,7 @@ private:
     DragHandle divider;
     juce::Label wordmark;
     juce::TextButton presetButton { "Presets" };
+    juce::TextButton stereoButton { "Stereo" }; // toggles the goniometer panel
     juce::TextButton capAButton { "A" }, capBButton { "B" }, clearButton { "Clr" }, exportButton { "Export" };
 
     void showPresetMenu();

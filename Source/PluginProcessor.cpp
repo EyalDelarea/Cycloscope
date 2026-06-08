@@ -104,6 +104,7 @@ void CycloscopeProcessor::getStateInformation (juce::MemoryBlock& destData)
         xml->setAttribute ("editorWidth",  editorWidth.load());
         xml->setAttribute ("editorHeight", editorHeight.load());
         xml->setAttribute ("gonioWidth",   gonioWidth.load());
+        xml->setAttribute ("gonioShown",   gonioShown.load() ? 1 : 0);
         copyXmlToBinary (*xml, destData);
     }
 }
@@ -115,6 +116,7 @@ void CycloscopeProcessor::setStateInformation (const void* data, int sizeInBytes
         editorWidth.store  (xml->getIntAttribute ("editorWidth",  editorWidth.load()));
         editorHeight.store (xml->getIntAttribute ("editorHeight", editorHeight.load()));
         gonioWidth.store   (xml->getIntAttribute ("gonioWidth",   gonioWidth.load()));
+        gonioShown.store   (xml->getIntAttribute ("gonioShown",   gonioShown.load() ? 1 : 0) != 0);
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
     }
 }
