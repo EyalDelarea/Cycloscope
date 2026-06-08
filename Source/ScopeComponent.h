@@ -58,7 +58,9 @@ private:
     // the timer (message thread) and read only by paint (GL render thread). specFront is
     // the index of the readable buffer (-1 until the first analyse()); specBack is the
     // one the timer writes next. The previous buffer doubles as the ballistic history.
-    std::vector<float> specBuf[2];
+    std::vector<float> displayedDb;             // per-bin ballistic state (raw, timer thread only)
+    std::vector<double> prefixSum;              // scratch for O(n) constant-Q smoothing
+    std::vector<float> specBuf[2];              // published (tilted + smoothed) dB for paint
     std::atomic<int> specFront { -1 };
     int specBack = 0;
     double lastAnalyseMs = 0.0;                  // for frame-rate-independent release ballistics

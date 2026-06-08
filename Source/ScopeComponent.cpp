@@ -385,9 +385,12 @@ void ScopeComponent::analyse()
 {
     const int fftSize = 1 << kFftOrder;
     const int numBins = fftSize / 2;
+    const double sr   = proc.currentSampleRate.load();
 
-    if ((int) specBuf[0].size() != numBins)
+    if ((int) displayedDb.size() != numBins)
     {
+        displayedDb.assign ((size_t) numBins, -120.0f);
+        prefixSum.assign  ((size_t) numBins + 1, 0.0);
         specBuf[0].assign ((size_t) numBins, -120.0f);
         specBuf[1].assign ((size_t) numBins, -120.0f);
         specFront.store (-1, std::memory_order_release);
@@ -401,25 +404,45 @@ void ScopeComponent::analyse()
     fftWindow.multiplyWithWindowingTable (fftData.data(), (size_t) fftSize);
     fft.performFrequencyOnlyForwardTransform (fftData.data()); // magnitudes [0..numBins]
 
-    // Per-bin ballistics: instant attack (peaks register immediately), slow time-based
-    // release (smooth, readable decay). releaseCoeff derives from the *actual* elapsed
-    // time so the feel is identical regardless of frame rate / CPU load.
-    const int front = specFront.load (std::memory_order_acquire);
-    const float* prev = (front >= 0) ? specBuf[(size_t) front].data() : nullptr;
-    float* out = specBuf[(size_t) specBack].data();
-
-    const double now = juce::Time::getMillisecondCounterHiRes();
-    const double dt  = (lastAnalyseMs > 0.0) ? (now - lastAnalyseMs) * 0.001 : 0.0;
+    // Frame-rate-independent release coefficient (instant attack handled in the loop).
+    const bool   seed = (specFront.load (std::memory_order_acquire) < 0);
+    const double now  = juce::Time::getMillisecondCounterHiRes();
+    const double dt   = (lastAnalyseMs > 0.0) ? (now - lastAnalyseMs) * 0.001 : 0.0;
     lastAnalyseMs = now;
     constexpr double kReleaseTau = 0.35; // seconds to ~63% — the "good spot", not user-exposed
-    const float rel = (prev != nullptr && dt > 0.0) ? (float) (1.0 - std::exp (-dt / kReleaseTau)) : 1.0f;
+    const float rel = (! seed && dt > 0.0) ? (float) (1.0 - std::exp (-dt / kReleaseTau)) : 1.0f;
+
+    // Pro-Q-style upward spectral tilt (slope), referenced at 1 kHz, so the displayed
+    // shape rises toward the highs instead of looking bottom-heavy.
+    constexpr double kTiltDbPerOct = 4.5;
+    const double invLog2 = 1.0 / std::log (2.0);
 
     for (int i = 0; i < numBins; ++i)
     {
         const float mag = fftData[(size_t) i] / (float) fftSize;
-        const float ndb = juce::Decibels::gainToDecibels (mag, -120.0f);
-        if (prev == nullptr || ndb >= prev[(size_t) i]) out[(size_t) i] = ndb;            // instant attack
-        else out[(size_t) i] = prev[(size_t) i] + (ndb - prev[(size_t) i]) * rel;          // slow release
+        float ndb = juce::Decibels::gainToDecibels (mag, -120.0f);
+        const double f = (double) i * sr / (double) fftSize;
+        if (f > 0.0) ndb += (float) (kTiltDbPerOct * std::log (f / 1000.0) * invLog2);
+        if (seed || ndb >= displayedDb[(size_t) i]) displayedDb[(size_t) i] = ndb;          // instant attack
+        else displayedDb[(size_t) i] += (ndb - displayedDb[(size_t) i]) * rel;              // slow release
+    }
+
+    // Constant-Q frequency smoothing (±1/6 octave): denoise the curve like a premium
+    // analyzer without flattening peaks. O(n) via a prefix sum over the tilted dB.
+    prefixSum[0] = 0.0;
+    for (int i = 0; i < numBins; ++i)
+        prefixSum[(size_t) i + 1] = prefixSum[(size_t) i] + (double) displayedDb[(size_t) i];
+
+    constexpr double kSmoothOct = 1.0 / 6.0;
+    const double loMul = std::pow (2.0, -kSmoothOct);
+    const double hiMul = std::pow (2.0,  kSmoothOct);
+    float* out = specBuf[(size_t) specBack].data();
+    for (int i = 0; i < numBins; ++i)
+    {
+        int a = juce::jlimit (0, numBins - 1, (int) std::floor (i * loMul));
+        int b = juce::jlimit (0, numBins - 1, (int) std::ceil  (i * hiMul));
+        if (b < a) b = a;
+        out[(size_t) i] = (float) ((prefixSum[(size_t) b + 1] - prefixSum[(size_t) a]) / (double) (b - a + 1));
     }
 
     specFront.store (specBack, std::memory_order_release); // publish
@@ -434,7 +457,7 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
 
     const double sr   = proc.currentSampleRate.load();
     const double minF = 20.0, maxF = juce::jmax (1000.0, sr * 0.5);
-    const float  topDb = 6.0f, botDb = -96.0f;
+    const float  topDb = 24.0f, botDb = -96.0f; // widened headroom for the upward tilt
     auto freqToX = [&] (double f) -> float
     {
         const double t = (std::log10 (juce::jlimit (minF, maxF, f)) - std::log10 (minF))
@@ -480,12 +503,27 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
     {
         const double fLo = xToFreq ((float) x - 0.5f);
         const double fHi = xToFreq ((float) x + 0.5f);
-        int bLo = juce::jlimit (1, numBins - 1, (int) std::floor (fLo * (double) fftSize / sr));
-        int bHi = juce::jlimit (1, numBins - 1, (int) std::ceil  (fHi * (double) fftSize / sr));
-        if (bHi < bLo) bHi = bLo;
-        float peak = -120.0f;
-        for (int i = bLo; i <= bHi; ++i) peak = juce::jmax (peak, mag[(size_t) i]);
-        const float y = dbToY (peak);
+        const int bLo = juce::jlimit (1, numBins - 1, (int) std::floor (fLo * (double) fftSize / sr));
+        const int bHi = juce::jlimit (1, numBins - 1, (int) std::ceil  (fHi * (double) fftSize / sr));
+        float val;
+        if (bHi - bLo <= 1)
+        {
+            // sub-bin column (low freq): interpolate between bins so the bass is a smooth
+            // line, not the stair-steps that "max over one bin" produced.
+            const double bc = xToFreq ((float) x) * (double) fftSize / sr;
+            const int i0 = juce::jlimit (1, numBins - 1, (int) std::floor (bc));
+            const int i1 = juce::jmin (numBins - 1, i0 + 1);
+            const float fr = (float) juce::jlimit (0.0, 1.0, bc - (double) i0);
+            val = mag[(size_t) i0] * (1.0f - fr) + mag[(size_t) i1] * fr;
+        }
+        else
+        {
+            // multi-bin column (high freq): average the already-smoothed bins in the span.
+            float s = 0.0f;
+            for (int i = bLo; i <= bHi; ++i) s += mag[(size_t) i];
+            val = s / (float) (bHi - bLo + 1);
+        }
+        const float y = dbToY (val);
         if (! started) { curve.startNewSubPath ((float) x, y); started = true; }
         else           curve.lineTo ((float) x, y);
     }
