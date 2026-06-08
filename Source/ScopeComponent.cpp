@@ -416,11 +416,14 @@ void ScopeComponent::analyse()
     // shape rises toward the highs instead of looking bottom-heavy.
     constexpr double kTiltDbPerOct = 4.5;
     const double invLog2 = 1.0 / std::log (2.0);
+    // Level calibration: our mag = |FFT|/fftSize with an un-compensated Hann window reads
+    // low, so the curve sat ~25 dB under Pro-Q's analyzer. Lift it to match. (Tunable.)
+    constexpr float kSpecOffsetDb = 24.0f;
 
     for (int i = 0; i < numBins; ++i)
     {
         const float mag = fftData[(size_t) i] / (float) fftSize;
-        float ndb = juce::Decibels::gainToDecibels (mag, -120.0f);
+        float ndb = juce::Decibels::gainToDecibels (mag, -120.0f) + kSpecOffsetDb;
         const double f = (double) i * sr / (double) fftSize;
         if (f > 0.0) ndb += (float) (kTiltDbPerOct * std::log (f / 1000.0) * invLog2);
         if (seed || ndb >= displayedDb[(size_t) i]) displayedDb[(size_t) i] = ndb;          // instant attack
