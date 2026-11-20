@@ -64,12 +64,24 @@ target_link_libraries(Cycloscope
 # ---- Tests ----
 enable_testing()
 
+# Sanitizer builds of the test targets only (the plugin itself is never instrumented):
+#   cmake -B build-asan -DCYCLOSCOPE_SANITIZER=address   (or thread / undefined)
+#   cmake --build build-asan --target cycloscope_plugin_tests test_ringbuffer ...
+set(CYCLOSCOPE_SANITIZER "" CACHE STRING "Instrument the test targets: address, thread or undefined")
+function(cycloscope_sanitize target)
+    if(CYCLOSCOPE_SANITIZER AND NOT MSVC)
+        target_compile_options(${target} PRIVATE -fsanitize=${CYCLOSCOPE_SANITIZER} -fno-omit-frame-pointer -g)
+        target_link_options(${target} PRIVATE -fsanitize=${CYCLOSCOPE_SANITIZER})
+    endif()
+endfunction()
+
 # The DSP tests check with assert(). Release builds (CI configures Release) define NDEBUG,
 # which would silently compile every check away, so keep asserts live in the test targets.
 function(cycloscope_dsp_test name)
     add_executable(test_${name} Tests/test_${name}.cpp)
     target_include_directories(test_${name} PRIVATE Source)
     target_compile_options(test_${name} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)
+    cycloscope_sanitize(test_${name})
     add_test(NAME ${name} COMMAND test_${name})
 endfunction()
 
@@ -110,5 +122,6 @@ if(CYCLOSCOPE_PLUGIN_TESTS)
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
     )
+    cycloscope_sanitize(cycloscope_plugin_tests)
     add_test(NAME plugin COMMAND cycloscope_plugin_tests)
 endif()

@@ -33,6 +33,10 @@ public:
 
     RingBuffer& getScopeBufferL() noexcept { return *scopeBufferL; }
     RingBuffer& getScopeBufferR() noexcept { return *scopeBufferR; }
+    // Editor size limits (window) and the stereo panel's draggable width range.
+    static constexpr int kMinWidth = 560, kMaxWidth = 2400, kMinHeight = 340, kMaxHeight = 1400;
+    static constexpr int kMinGonioWidth = 140, kMaxGonioWidth = 480;
+
     std::atomic<double> currentSampleRate { 44100.0 };
     std::atomic<double> hostBpm { 120.0 };
     std::atomic<int> editorWidth  { 1080 };

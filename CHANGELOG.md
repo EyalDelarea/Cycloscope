@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### Fixed
+- **Bad input no longer breaks the display:** a single block of NaN / Inf / absurdly loud
+  samples from an upstream plugin left the spectrum stuck (its ballistics held NaN forever).
+  The copy the analyzer reads is now sanitised; the audio itself still passes through untouched.
+- **Saved-state robustness:** a host handing back another plugin's or a corrupted chunk is
+  ignored instead of replacing the parameter tree; out-of-range stored window / stereo-panel
+  sizes are clamped. Valid sessions (including v0.1.0 ones) load exactly as before.
+- **Small windows:** the stereo panel now yields space on narrow windows instead of squeezing
+  the main display to a sliver; your dragged panel width is kept for when there is room.
+- **Closing the window with a file dialog open** (Export / Save / Load preset) could call back
+  into the deleted editor; the dialog is now dismissed with the window.
+- **Preset loading** ignores XML files that are not Cycloscope presets.
+- **Tests:** the DSP test suites' `assert()` checks were compiled out in Release (as CI builds),
+  so they checked nothing; they are live again. New JUCE-level plugin tests cover state restore,
+  the audio-callback contract (bit-exact passthrough, no allocation), hostile input and the
+  editor lifecycle, plus a `--render` tool that snapshots the UI to PNG.
+
 ## [0.2.0] — 2026-06-08
 
 Spectrum analyzer overhaul (FabFilter Pro-Q-class response) and GPU rendering.

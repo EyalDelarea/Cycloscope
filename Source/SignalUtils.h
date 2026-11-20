@@ -22,6 +22,18 @@ inline void peakNormalize (float* buf, int n, float target = 0.9f) noexcept
     for (int i = 0; i < n; ++i) buf[i] *= g;
 }
 
+// Make one input sample safe to store for display. Audio is never altered (the plugin is
+// a passthrough); only the copy the GUI analyses goes through this. NaN/Inf from a
+// misbehaving upstream plugin become silence, and absurd finite values are clamped to
+// +-64 (~+36 dBFS, far beyond every view's range). Without this, a single bad block
+// left history-carrying views (spectrum ballistics, smoothing) stuck on NaN for good.
+inline float displaySafe (float x) noexcept
+{
+    if (! std::isfinite (x)) return 0.0f;
+    constexpr float kLimit = 64.0f;
+    return x > kLimit ? kLimit : (x < -kLimit ? -kLimit : x);
+}
+
 // Combine an L/R sample pair into a single display stream per source index:
 // 0=Mono (L+R)/2, 1=Left, 2=Right, 3=Side (L-R)/2. Pure C++.
 inline float combineChannel (float L, float R, int source) noexcept

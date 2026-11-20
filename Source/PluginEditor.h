@@ -65,6 +65,11 @@ private:
     void loadPreset();
     static juce::File presetDir();
 
+    // Owned by the editor (not kept alive by its own callback): if the window closes while
+    // a save/load/export dialog is open, destroying the chooser dismisses the dialog and its
+    // callback never runs against a deleted editor.
+    std::unique_ptr<juce::FileChooser> fileChooser;
+
     ModeToggle modeToggle;
 
     juce::ComboBox triggerBox, sourceBox, syncBox, sweepBox;
