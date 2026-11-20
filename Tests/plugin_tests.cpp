@@ -57,17 +57,19 @@ static void pumpMessages (int ms)
 // something real to show.
 struct SignalGen
 {
-    double sr = 48000.0, phaseL = 0.0, phaseR = 0.0;
+    double sr = 48000.0, phase = 0.0;
     double hz = 110.0;
+    double widthPhase = 0.012; // R runs a little ahead of L: a narrow, plausible stereo image
     float  gain = 0.5f;
     void fill (juce::AudioBuffer<float>& b)
     {
         for (int i = 0; i < b.getNumSamples(); ++i)
         {
-            phaseL += hz / sr;         phaseL -= std::floor (phaseL);
-            phaseR += hz * 1.003 / sr; phaseR -= std::floor (phaseR);
-            const float l = (float) (2.0 * phaseL - 1.0) * gain;
-            const float r = (float) (2.0 * phaseR - 1.0) * gain;
+            phase += hz / sr; phase -= std::floor (phase);
+            const double pr = phase + widthPhase - std::floor (phase + widthPhase);
+            // two partials of a saw-like tone so every view has harmonics to show
+            const float l = (float) ((2.0 * phase - 1.0) * 0.8 + 0.2 * std::sin (6.283185307179586 * 3.0 * phase)) * gain;
+            const float r = (float) ((2.0 * pr    - 1.0) * 0.8 + 0.2 * std::sin (6.283185307179586 * 3.0 * pr))    * gain;
             b.setSample (0, i, l);
             if (b.getNumChannels() > 1) b.setSample (1, i, r);
         }
@@ -405,9 +407,10 @@ static void testEditorLifecycleStress()
 
 
 //==============================================================================
-// --bench: what one GUI frame costs. "paint" is one full software-rendered editor frame
-// (an upper bound: in a host the GL context rasterises); "timers" is the CPU the editor's
-// timers burn per second of wall time (spectrum analysis runs there).
+// --bench: what one GUI frame costs, in process CPU time. "paint" is one full editor frame
+// rendered by the CoreGraphics software renderer (an upper bound: in a host the GL context
+// rasterises, but the per-frame analysis inside paint is the same); "timers" is the CPU the
+// editor's timers burn per second of wall time (spectrum analysis runs there).
 static double cpuSeconds()
 {
     return (double) std::clock() / CLOCKS_PER_SEC; // process CPU time (all threads)
@@ -434,9 +437,9 @@ static int bench (const juce::StringArray&)
             const double timerPct = 100.0 * (cpuSeconds() - c0) / ((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001);
 
             const int frames = 30;
-            const double p0 = juce::Time::getMillisecondCounterHiRes();
+            const double p0 = cpuSeconds();
             for (int i = 0; i < frames; ++i) ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
-            const double paintMs = (juce::Time::getMillisecondCounterHiRes() - p0) / frames;
+            const double paintMs = 1000.0 * (cpuSeconds() - p0) / frames;
             std::printf ("%-10.0f %4dx%-5d %-10s %10.2f %14.1f\n", c.sr, c.w, c.h, modeNames[mode], paintMs, timerPct);
         }
     return 0;
@@ -447,7 +450,7 @@ static int bench (const juce::StringArray&)
 // mode, at each requested size, while a live signal streams in from an audio thread.
 struct View { const char* name; int mode; bool stereo; int source; bool silent; };
 
-static juce::Image snapshotEditor (CycloscopeProcessor& p, int w, int h, float scale, const View& v, int settleMs)
+static juce::Image snapshotEditor (CycloscopeProcessor& p, int w, int h, float scale, const View& v)
 {
     setParam (p, "displayMode", (float) v.mode);
     setParam (p, "channelSource", (float) v.source);
@@ -456,7 +459,17 @@ static juce::Image snapshotEditor (CycloscopeProcessor& p, int w, int h, float s
     p.editorHeight.store (h);
     std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
     ed->setSize (w, h);
-    pumpMessages (settleMs);
+
+    // Deterministic: audio is fed synchronously, one 60 Hz frame's worth at a time, and each
+    // frame is painted, so history-carrying views (Base Shape averaging, spectrum ballistics,
+    // goniometer persistence) settle exactly as they would on screen.
+    SignalGen gen; gen.sr = p.getSampleRate();
+    for (int frame = 0; frame < 45; ++frame)
+    {
+        if (! v.silent) runBlocks (p, gen, 2, 400);
+        pumpMessages (16);
+        ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
+    }
     auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, scale);
     ed.reset();
     return img;
@@ -494,10 +507,7 @@ static int renderAll (const juce::StringArray& args)
         for (auto& v : views)
         {
             auto p = makeProcessor (48000.0, 512);
-            std::unique_ptr<AudioThread> audio;
-            if (! v.silent) audio = std::make_unique<AudioThread> (*p, 48000.0, 512);
-            auto img = snapshotEditor (*p, sz.x, sz.y, scale, v, 1500);
-            audio.reset();
+            auto img = snapshotEditor (*p, sz.x, sz.y, scale, v);
             auto f = dir.getChildFile (juce::String (v.name) + "-" + juce::String (sz.x) + "x" + juce::String (sz.y) + ".png");
             f.deleteFile();
             juce::FileOutputStream os (f);
