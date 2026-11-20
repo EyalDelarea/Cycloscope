@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 ## [Unreleased]
 
 ### Fixed
+- **Freeze restores consistently:** a host can send the Freeze switch an in-between value (e.g.
+  0.37); restoring a saved state could then leave it reporting that raw value or the switched one,
+  depending on what it held before. It now always comes back as on or off (pluginval 2
+  "Discrete parameter state restoration").
 - **VST3 passes the Steinberg validator:** the plugin's single program had an empty name, which the
   VST3 SDK validator (run by pluginval) rejects as "Program 000 has no name"; it is now "Default".
 - **Base Shape no longer hogs the host's UI thread:** pitch detection ran a direct

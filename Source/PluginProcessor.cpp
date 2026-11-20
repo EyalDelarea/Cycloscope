@@ -121,6 +121,14 @@ void CycloscopeProcessor::setStateInformation (const void* data, int sizeInBytes
         gonioWidth.store   (juce::jlimit (kMinGonioWidth, kMaxGonioWidth, xml->getIntAttribute ("gonioWidth", gonioWidth.load())));
         gonioShown.store   (xml->getIntAttribute ("gonioShown",   gonioShown.load() ? 1 : 0) != 0);
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
+
+        // An on/off parameter keeps whatever raw value a host last sent (e.g. 0.37), and the
+        // restore above skips it when the stored step already matches, so the same state could
+        // come back as 0.37 or as 0. Snap switches to the step they actually hold.
+        for (auto* param : getParameters())
+            if (auto* sw = dynamic_cast<juce::AudioParameterBool*> (param))
+                if (const float stepped = sw->get() ? 1.0f : 0.0f; param->getValue() != stepped)
+                    sw->setValueNotifyingHost (stepped);
     }
 }
 
