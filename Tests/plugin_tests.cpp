@@ -167,6 +167,10 @@ static void testBusLayouts()
     CHECK (p.checkBusesLayoutSupported ({ { CS::stereo() }, { CS::stereo() } }));
     CHECK (! p.checkBusesLayoutSupported ({ { CS::mono() },   { CS::stereo() } }));
     CHECK (! p.checkBusesLayoutSupported ({ { CS::create5point1() }, { CS::create5point1() } }));
+
+    // The VST3 SDK validator (run by pluginval) rejects a program list whose program has no name.
+    CHECK (p.getNumPrograms() == 1);
+    CHECK (p.getProgramName (0).isNotEmpty());
 }
 
 
