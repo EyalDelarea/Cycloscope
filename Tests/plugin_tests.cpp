@@ -288,6 +288,36 @@ static void testStateRoundTrip()
 
 // A session saved by v0.1.0 (it still carries the since-removed stereoDecay parameter)
 // must load exactly: parameters by index, window and stereo-panel sizes verbatim.
+// pluginval 2 "Discrete parameter state restoration": a host may send an on/off parameter any
+// normalised value. Restoring the same state must give the same value whatever it held before.
+static void testSwitchRestoresToSameValue()
+{
+    CycloscopeProcessor p;
+    // What the VST3/AU wrappers do for a host parameter change: set the raw value, then notify.
+    auto hostSet = [] (juce::AudioProcessorParameter* prm, float v) { prm->setValue (v); prm->sendValueChangedMessageToListeners (v); };
+    for (auto* param : p.getParameters())
+    {
+        if (! param->isDiscrete())
+            continue;
+        for (float v : { 0.12f, 0.37f, 0.63f, 0.89f })
+        {
+            const float other = v < 0.5f ? v + 0.4f : v - 0.4f;
+            hostSet (param, v);
+            juce::MemoryBlock state;
+            p.getStateInformation (state);
+            p.setStateInformation (state.getData(), (int) state.getSize());
+            const float fromSame = param->getValue();
+            hostSet (param, other);
+            p.setStateInformation (state.getData(), (int) state.getSize());
+            const float fromOther = param->getValue();
+            if (std::abs (fromSame - fromOther) > 1.0e-4f)
+                std::printf ("  %s: set %.2f -> restored %.3f, from %.2f -> %.3f\n",
+                             param->getName (64).toRawUTF8(), v, fromSame, other, fromOther);
+            CHECK (std::abs (fromSame - fromOther) <= 1.0e-4f);
+        }
+    }
+}
+
 static void testLegacyStateLoads()
 {
     const char* legacy =
@@ -534,6 +564,7 @@ int main (int argc, char** argv)
     testPassthroughAndNoAllocation();
     testBusLayouts();
     testStateRoundTrip();
+    testSwitchRestoresToSameValue();
     testLegacyStateLoads();
     testHostileStateIsContained();
     testSmallWindowKeepsScopeUsable();
