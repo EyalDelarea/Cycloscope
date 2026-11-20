@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 ## [Unreleased]
 
 ### Fixed
+- **VST3 passes the Steinberg validator:** the plugin's single program had an empty name, which the
+  VST3 SDK validator (run by pluginval) rejects as "Program 000 has no name"; it is now "Default".
 - **Base Shape no longer hogs the host's UI thread:** pitch detection ran a direct
   O(N·lag) correlation every frame (≈10–30 ms of CPU per frame at 44.1–192 kHz, i.e. more than
   the 60 fps budget, under the host's message lock). It now uses an FFT (≈1 ms per frame),
