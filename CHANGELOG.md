@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 ## [Unreleased]
 
 ### Fixed
+- **Base Shape no longer hogs the host's UI thread:** pitch detection ran a direct
+  O(N·lag) correlation every frame (≈10–30 ms of CPU per frame at 44.1–192 kHz, i.e. more than
+  the 60 fps budget, under the host's message lock). It now uses an FFT (≈1 ms per frame),
+  with identical results to the old detector; the cycle phase search is ~2× faster too.
 - **Bad input no longer breaks the display:** a single block of NaN / Inf / absurdly loud
   samples from an upstream plugin left the spectrum stuck (its ballistics held NaN forever).
   The copy the analyzer reads is now sanitised; the audio itself still passes through untouched.

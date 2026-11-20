@@ -10,8 +10,12 @@ inline int bestCircularShift (const float* a, const float* ref, int n) noexcept
     int best = 0; double bestCorr = -1e300;
     for (int s = 0; s < n; ++s)
     {
+        // Same terms in the same order as sum_i a[(i+s)%n]*ref[i], split at the wrap point so
+        // the inner loop has no per-sample modulo (bit-identical result, several times faster).
         double c = 0.0;
-        for (int i = 0; i < n; ++i) c += (double) a[(i + s) % n] * (double) ref[i];
+        const int split = n - s;
+        for (int i = 0; i < split; ++i) c += (double) a[i + s] * (double) ref[i];
+        for (int i = split; i < n; ++i) c += (double) a[i - split] * (double) ref[i];
         if (c > bestCorr) { bestCorr = c; best = s; }
     }
     return best;
