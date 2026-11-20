@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### Changed
+- **Sharper, tidier interface:** the scope grid, its labels and the stereo trace are now drawn at
+  the display's full Retina resolution instead of being upscaled; grid lines and the trace no longer
+  strike through axis labels and readouts; drop-downs are a fixed button height and line up with the
+  knobs instead of stretching into tall boxes on large windows; left edges align at one margin; the
+  window resize grip is muted; the `-90` spectrum label is no longer cut off; a silent signal reads
+  `RMS -inf dB`, matching the stereo panel.
+
 ### Fixed
 - **Base Shape no longer hogs the host's UI thread:** pitch detection ran a direct
   O(N·lag) correlation every frame (≈10–30 ms of CPU per frame at 44.1–192 kHz, i.e. more than
