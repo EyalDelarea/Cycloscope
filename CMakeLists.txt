@@ -63,37 +63,24 @@ target_link_libraries(Cycloscope
 
 # ---- Tests ----
 enable_testing()
-add_executable(test_ringbuffer Tests/test_ringbuffer.cpp)
-target_include_directories(test_ringbuffer PRIVATE Source)
-add_test(NAME ringbuffer COMMAND test_ringbuffer)
 
-add_executable(test_trigger Tests/test_trigger.cpp)
-target_include_directories(test_trigger PRIVATE Source)
-add_test(NAME trigger COMMAND test_trigger)
+# The DSP tests check with assert(). Release builds (CI configures Release) define NDEBUG,
+# which would silently compile every check away, so keep asserts live in the test targets.
+function(cycloscope_dsp_test name)
+    add_executable(test_${name} Tests/test_${name}.cpp)
+    target_include_directories(test_${name} PRIVATE Source)
+    target_compile_options(test_${name} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)
+    add_test(NAME ${name} COMMAND test_${name})
+endfunction()
 
-add_executable(test_perioddetector Tests/test_perioddetector.cpp)
-target_include_directories(test_perioddetector PRIVATE Source)
-add_test(NAME perioddetector COMMAND test_perioddetector)
-
-add_executable(test_cycleaverager Tests/test_cycleaverager.cpp)
-target_include_directories(test_cycleaverager PRIVATE Source)
-add_test(NAME cycleaverager COMMAND test_cycleaverager)
-
-add_executable(test_signalutils Tests/test_signalutils.cpp)
-target_include_directories(test_signalutils PRIVATE Source)
-add_test(NAME signalutils COMMAND test_signalutils)
-
-add_executable(test_phasealign Tests/test_phasealign.cpp)
-target_include_directories(test_phasealign PRIVATE Source)
-add_test(NAME phasealign COMMAND test_phasealign)
-
-add_executable(test_notename Tests/test_notename.cpp)
-target_include_directories(test_notename PRIVATE Source)
-add_test(NAME notename COMMAND test_notename)
-
-add_executable(test_stereoutils Tests/test_stereoutils.cpp)
-target_include_directories(test_stereoutils PRIVATE Source)
-add_test(NAME stereoutils COMMAND test_stereoutils)
+cycloscope_dsp_test(ringbuffer)
+cycloscope_dsp_test(trigger)
+cycloscope_dsp_test(perioddetector)
+cycloscope_dsp_test(cycleaverager)
+cycloscope_dsp_test(signalutils)
+cycloscope_dsp_test(phasealign)
+cycloscope_dsp_test(notename)
+cycloscope_dsp_test(stereoutils)
 
 # ---- Plugin-level tests + dev tooling (state, audio-callback contract, editor lifecycle,
 # render-to-PNG). Compiled from the plugin's own sources so it runs headless on CI.
