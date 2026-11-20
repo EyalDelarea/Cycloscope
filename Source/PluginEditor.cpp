@@ -221,10 +221,11 @@ void CycloscopeEditor::resized()
     auto controls = r.removeFromBottom (92);
     if (processorRef.gonioShown.load()) // collapsed -> scope takes the full width, panel renders nothing
     {
-        // The stored (user-dragged) width is kept as-is; on a narrow window the panel just
-        // gives way so the main display always keeps the larger share.
+        // The stored (user-dragged) width is kept as-is; only on a window too narrow for it
+        // does the panel give way, so the main display always keeps at least half the width
+        // (31 = the 7 px divider + the scope's 2 x 12 px margins).
         const int gonioW = juce::jmin (processorRef.gonioWidth.load(),
-                                       juce::jmax (CycloscopeProcessor::kMinGonioWidth, (int) (r.getWidth() * 0.4f)));
+                                       juce::jmax (CycloscopeProcessor::kMinGonioWidth, r.getWidth() / 2 - 31));
         auto gonioStrip = r.removeFromRight (gonioW); // adjustable
         goniometer.setBounds (gonioStrip.reduced (6, 4));
         divider.setBounds (r.removeFromRight (7));

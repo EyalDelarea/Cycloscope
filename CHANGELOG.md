@@ -14,7 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
   ignored instead of replacing the parameter tree; out-of-range stored window / stereo-panel
   sizes are clamped. Valid sessions (including v0.1.0 ones) load exactly as before.
 - **Small windows:** the stereo panel now yields space on narrow windows instead of squeezing
-  the main display to a sliver; your dragged panel width is kept for when there is room.
+  the main display to a sliver (it keeps at least half the width); your dragged panel width is
+  kept, and windows wide enough for it look exactly as before.
 - **Closing the window with a file dialog open** (Export / Save / Load preset) could call back
   into the deleted editor; the dialog is now dismissed with the window.
 - **Preset loading** ignores XML files that are not Cycloscope presets.

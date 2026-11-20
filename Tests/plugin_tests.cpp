@@ -299,9 +299,9 @@ static void testLegacyStateLoads()
     auto p = makeProcessor();
     p->setStateInformation (mb.getData(), (int) mb.getSize());
     auto v = [&] (const char* id) { return p->apvts.getRawParameterValue (id)->load(); };
-    auto near = [] (float a, float b) { return std::abs (a - b) < 1.0e-4f; };
-    CHECK (v ("triggerMode") == 2.0f && near (v ("threshold"), 0.5f) && near (v ("timeZoom"), 8.0f));
-    CHECK (near (v ("ampZoom"), 2.0f) && v ("displayMode") == 2.0f && v ("cycles") == 3.0f);
+    auto approx = [] (float a, float b) { return std::abs (a - b) < 1.0e-4f; };
+    CHECK (v ("triggerMode") == 2.0f && approx (v ("threshold"), 0.5f) && approx (v ("timeZoom"), 8.0f));
+    CHECK (approx (v ("ampZoom"), 2.0f) && v ("displayMode") == 2.0f && v ("cycles") == 3.0f);
     CHECK (v ("channelSource") == 4.0f && v ("syncDiv") == 3.0f && v ("triggerSweep") == 1.0f);
     CHECK (p->editorWidth == 1300 && p->editorHeight == 700 && p->gonioWidth == 260 && p->gonioShown);
 }
