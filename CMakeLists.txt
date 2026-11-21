@@ -96,7 +96,8 @@ cycloscope_dsp_test(stereoutils)
 
 # ---- Plugin-level tests + dev tooling (state, audio-callback contract, editor lifecycle,
 # render-to-PNG). Compiled from the plugin's own sources so it runs headless on CI.
-option(CYCLOSCOPE_PLUGIN_TESTS "Build the JUCE-level plugin tests / render harness" ON)
+# Off by default so release builds do not build or gate on it; CI turns it on.
+option(CYCLOSCOPE_PLUGIN_TESTS "Build the JUCE-level plugin tests / render harness" OFF)
 if(CYCLOSCOPE_PLUGIN_TESTS)
     juce_add_console_app(cycloscope_plugin_tests PRODUCT_NAME "cycloscope_plugin_tests")
     target_sources(cycloscope_plugin_tests PRIVATE
