@@ -83,10 +83,17 @@ void GoniometerComponent::paint (juce::Graphics& g)
     // Accumulate at the display's physical resolution (2x on Retina) so the trace is as
     // sharp as the rest of the UI rather than a 1x bitmap upscaled.
     const float pxScale = juce::jlimit (1.0f, 4.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
-    const int pw = juce::jmax (1, juce::roundToInt ((float) getWidth()  * pxScale));
-    const int ph = juce::jmax (1, juce::roundToInt ((float) getHeight() * pxScale));
-    if (persistImage.getWidth() != pw || persistImage.getHeight() != ph)
+    // Only the plot square (plus room for the glow stroke) ever holds trace, so the
+    // buffer covers just that: at 2x this costs about what the old 1x full-panel image did.
+    const auto plotArea = juce::Rectangle<float> (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f)
+                              .expanded (3.0f).getSmallestIntegerContainer().getIntersection (getLocalBounds());
+    const int pw = juce::jmax (1, juce::roundToInt ((float) plotArea.getWidth()  * pxScale));
+    const int ph = juce::jmax (1, juce::roundToInt ((float) plotArea.getHeight() * pxScale));
+    if (persistImage.getWidth() != pw || persistImage.getHeight() != ph || persistArea != plotArea)
+    {
         persistImage = juce::Image (juce::Image::ARGB, pw, ph, true);
+        persistArea = plotArea;
+    }
     persistImage.multiplyAllAlphas (kDecay);
 
     if (rms >= GATE)
@@ -113,8 +120,9 @@ void GoniometerComponent::paint (juce::Graphics& g)
             else       p.lineTo (x, y);
         }
         juce::Graphics ig (persistImage);
-        ig.addTransform (juce::AffineTransform::scale ((float) pw / (float) juce::jmax (1, getWidth()),
-                                                       (float) ph / (float) juce::jmax (1, getHeight())));
+        ig.addTransform (juce::AffineTransform::translation ((float) -plotArea.getX(), (float) -plotArea.getY())
+                             .scaled ((float) pw / (float) juce::jmax (1, plotArea.getWidth()),
+                                      (float) ph / (float) juce::jmax (1, plotArea.getHeight())));
         ig.reduceClipRegion (juce::Rectangle<int> ((int) (cx - radius), (int) (cy - radius),
                                                    (int) (radius * 2.0f), (int) (radius * 2.0f)));
         ig.setColour (juce::Colour (0x40ff8a2b));           // soft glow underlay (a touch brighter)
@@ -122,7 +130,7 @@ void GoniometerComponent::paint (juce::Graphics& g)
         ig.setColour (juce::Colour (0xffff8a2b));           // bright opaque trace (persists clearly)
         ig.strokePath (p, juce::PathStrokeType (1.3f));
     }
-    g.drawImage (persistImage, getLocalBounds().toFloat());
+    g.drawImage (persistImage, plotArea.toFloat());
 
     // correlation meter (-1 .. +1) + L/R readout. Gate the correlation on the same
     // silence floor as the trace, so noise-floor dither doesn't show a phantom corr.

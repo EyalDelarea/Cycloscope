@@ -26,7 +26,10 @@ static void drawChipText (juce::Graphics& g, const juce::String& text, juce::Rec
     else                                                    r.setX (a.getCentreX() - tw * 0.5f);
     r.setY (a.getCentreY() - th * 0.5f);
     g.setColour (juce::Colour (kPlotBg).withAlpha (0.92f));
-    g.fillRoundedRectangle (r.expanded (3.0f, 1.0f), 2.0f);
+    auto chip = r.expanded (3.0f, 1.0f);
+    if (just.testFlags (juce::Justification::left))
+        chip.setLeft (0.0f); // run to the plot edge, so no stub of grid line is left in front of the text
+    g.fillRoundedRectangle (chip, 2.0f);
     g.setColour (textColour);
     g.drawText (text, area, just, false);
 }

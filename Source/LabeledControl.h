@@ -31,8 +31,8 @@ public:
         const auto knobArea = r.withTrimmedBottom (16);
         if (dynamic_cast<juce::ComboBox*> (&control) != nullptr)
         {
-            const int h = juce::jmin (28, knobArea.getHeight());
-            const int w = juce::jmin (r.getWidth(), 168);
+            const int h = juce::jmin (knobArea.getHeight(), getTopLevelComponent()->getWidth() >= 1800 ? 32 : 28);
+            const int w = juce::jmin (r.getWidth(), juce::jlimit (168, 232, r.getWidth() / 2)); // grows a little on big windows
             control.setBounds (juce::Rectangle<int> (w, h).withCentre (knobArea.getCentre()));
         }
         else if (dynamic_cast<juce::ToggleButton*> (&control) != nullptr)
