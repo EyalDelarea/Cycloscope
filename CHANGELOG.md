@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### Changed
+- **Sharper, tidier interface:** the scope grid, its labels and the stereo trace are drawn at
+  the display's full Retina resolution instead of being upscaled; grid lines no longer strike
+  through axis labels, and the live readouts sit clear of the grid and trace; drop-downs are a
+  fixed button size on the knobs' line instead of tall boxes that fill their cell; the wordmark,
+  scope and control bar share one left margin; the window resize grip is muted; the `-90`
+  spectrum label is no longer cut off; a silent signal reads `RMS -inf dB`, matching the stereo
+  panel.
+
 ### Fixed
 - **Freeze restores consistently:** a host can send the Freeze switch an in-between value (e.g.
   0.37); restoring a saved state could then leave it reporting that raw value or the switched one,

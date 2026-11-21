@@ -8,18 +8,49 @@
 #include "StereoUtils.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 
+static constexpr juce::uint32 kPlotBg = 0xff0e1114; // plot background (all three modes)
+
+// Axis label / readout drawn on a small chip of the plot background, so the grid hairline
+// it sits on (or the trace passing behind a readout) breaks cleanly around the text
+// instead of striking through it. Same text position and justification as drawText.
+static void drawChipText (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area,
+                          juce::Justification just, juce::Colour textColour)
+{
+    const auto font = g.getCurrentFont();
+    const float tw = juce::GlyphArrangement::getStringWidth (font, text);
+    const float th = font.getHeight();
+    auto r = juce::Rectangle<float> (tw, th);
+    const auto a = area.toFloat();
+    if (just.testFlags (juce::Justification::left))        r.setX (a.getX());
+    else if (just.testFlags (juce::Justification::right))  r.setX (a.getRight() - tw);
+    else                                                    r.setX (a.getCentreX() - tw * 0.5f);
+    r.setY (a.getCentreY() - th * 0.5f);
+    g.setColour (juce::Colour (kPlotBg).withAlpha (0.92f));
+    auto chip = r.expanded (3.0f, 1.0f);
+    if (just.testFlags (juce::Justification::left))
+        chip.setLeft (0.0f); // run to the plot edge, so no stub of grid line is left in front of the text
+    g.fillRoundedRectangle (chip, 2.0f);
+    g.setColour (textColour);
+    g.drawText (text, area, just, false);
+}
+
 ScopeComponent::ScopeComponent (CycloscopeProcessor& p) : proc (p)
 {
     startTimerHz (60); // first-class feel
 }
 
-void ScopeComponent::ensureGrid (int w, int h, bool baseShape)
+void ScopeComponent::ensureGrid (int w, int h, bool baseShape, float scale)
 {
-    if (gridCache.getWidth() == w && gridCache.getHeight() == h && gridBaseCached == baseShape)
+    if (gridW == w && gridH == h && gridScale == scale && gridBaseCached == baseShape && gridCache.isValid())
         return;
-    gridCache = juce::Image (juce::Image::ARGB, juce::jmax (1, w), juce::jmax (1, h), true);
+    // Cache at the display's physical resolution (2x on Retina) so the grid hairlines and
+    // labels stay as crisp as everything drawn live, instead of a 1x bitmap upscaled.
+    gridCache = juce::Image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt ((float) w * scale)),
+                             juce::jmax (1, juce::roundToInt ((float) h * scale)), true);
     juce::Graphics ig (gridCache);
+    ig.addTransform (juce::AffineTransform::scale (scale));
     drawGrid (ig, juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h), baseShape);
+    gridW = w; gridH = h; gridScale = scale;
     gridBaseCached = baseShape;
 }
 
@@ -51,9 +82,10 @@ void ScopeComponent::paint (juce::Graphics& g)
     if (modeIdx == 2) { paintSpectrum (g, bounds); return; }
 
     // background + labeled measurement grid (cached static layer, blitted each frame)
-    g.fillAll (juce::Colour (0xff0e1114));
-    ensureGrid (width, (int) bounds.getHeight(), modeIdx == 1);
-    g.drawImageAt (gridCache, 0, 0);
+    g.fillAll (juce::Colour (kPlotBg));
+    const float pxScale = juce::jlimit (1.0f, 4.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
+    ensureGrid (width, (int) bounds.getHeight(), modeIdx == 1, pxScale);
+    g.drawImageTransformed (gridCache, juce::AffineTransform::scale (1.0f / gridScale));
 
     if (modeIdx == 1) // Base Shape: draw A/B captured-cycle ghosts behind the live trace
     {
@@ -111,7 +143,7 @@ void ScopeComponent::paint (juce::Graphics& g)
         g.setFont (juce::Font (juce::FontOptions().withName (juce::Font::getDefaultMonospacedFontName()).withHeight (10.0f)));
         const juce::String txt = juce::String (lastFreq, 1) + " Hz   " + juce::String (noteNameForHz (lastFreq))
                                + "   " + juce::String ((int) (lastClarity * 100.0f)) + "%";
-        g.drawText (txt, bounds.toNearestInt().removeFromTop (18).reduced (10, 3), juce::Justification::right);
+        drawChipText (g, txt, bounds.toNearestInt().removeFromTop (18).reduced (10, 3), juce::Justification::right, juce::Colour (0xff6a717a));
         if (soft)
         {
             g.setFont (juce::Font (juce::FontOptions (12.0f)));
@@ -131,9 +163,10 @@ void ScopeComponent::paint (juce::Graphics& g)
     {
         g.setColour (juce::Colour (0xff6a717a));
         g.setFont (juce::Font (juce::FontOptions().withName (juce::Font::getDefaultMonospacedFontName()).withHeight (10.0f)));
+        const juce::String rmsStr = liveRms <= -99.5f ? juce::String ("-inf") : juce::String (liveRms, 1); // matches the stereo panel
         const juce::String txt = "Vpp " + juce::String (liveVpp, 2)
-                               + "   RMS " + juce::String (liveRms, 1) + " dB";
-        g.drawText (txt, bounds.toNearestInt().removeFromTop (18).reduced (10, 3), juce::Justification::right);
+                               + "   RMS " + rmsStr + " dB";
+        drawChipText (g, txt, bounds.toNearestInt().removeFromTop (18).reduced (10, 3), juce::Justification::right, juce::Colour (0xff6a717a));
     }
 }
 
@@ -298,20 +331,20 @@ void ScopeComponent::drawGrid (juce::Graphics& g, juce::Rectangle<float> b, bool
     g.setColour (juce::Colours::white.withAlpha (0.16f));
     g.drawHorizontalLine ((int) midY, b.getX(), b.getRight());
 
-    g.setColour (juce::Colour (0xff6a717a));
+    const juce::Colour lc (0xff6a717a);
     g.setFont (juce::Font (juce::FontOptions (9.0f)));
-    g.drawText ("+1.0", 5, (int) b.getY() + 2,                34, 12, juce::Justification::left);
-    g.drawText ("+0.5", 5, (int) (b.getHeight() * 0.25f) - 6, 34, 12, juce::Justification::left);
-    g.drawText ("0",    5, (int) midY - 6,                    34, 12, juce::Justification::left);
-    g.drawText ("-0.5", 5, (int) (b.getHeight() * 0.75f) - 6, 34, 12, juce::Justification::left);
-    g.drawText ("-1.0", 5, (int) b.getBottom() - 14,          34, 12, juce::Justification::left);
+    drawChipText (g, "+1.0", { 5, (int) b.getY() + 2,                34, 12 }, juce::Justification::left, lc);
+    drawChipText (g, "+0.5", { 5, (int) (b.getHeight() * 0.25f) - 6, 34, 12 }, juce::Justification::left, lc);
+    drawChipText (g, "0",    { 5, (int) midY - 6,                    34, 12 }, juce::Justification::left, lc);
+    drawChipText (g, "-0.5", { 5, (int) (b.getHeight() * 0.75f) - 6, 34, 12 }, juce::Justification::left, lc);
+    drawChipText (g, "-1.0", { 5, (int) b.getBottom() - 14,          34, 12 }, juce::Justification::left, lc);
 
     if (baseShape)
     {
         const char* lbl[3] = { "1/4", "1/2", "3/4" };
         for (int k = 1; k < 4; ++k)
-            g.drawText (lbl[k - 1], (int) (b.getWidth() * k / 4.0f) - 14, (int) b.getBottom() - 13,
-                        28, 12, juce::Justification::centred);
+            drawChipText (g, lbl[k - 1], { (int) (b.getWidth() * k / 4.0f) - 14, (int) b.getBottom() - 13, 28, 12 },
+                          juce::Justification::centred, lc);
     }
 }
 
@@ -456,7 +489,7 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
 {
     const int fftSize = 1 << kFftOrder;
     const int numBins = fftSize / 2;
-    g.fillAll (juce::Colour (0xff0e1114));
+    g.fillAll (juce::Colour (kPlotBg));
 
     const double sr   = proc.currentSampleRate.load();
     const double minF = 20.0, maxF = juce::jmax (1000.0, sr * 0.5);
@@ -483,13 +516,22 @@ void ScopeComponent::paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b)
     const double fl[] = { 50,100,200,500,1000,2000,5000,10000,20000 };
     for (double f : fl) if (f < maxF) g.drawVerticalLine ((int) freqToX (f), b.getY(), b.getBottom());
     for (float db = topDb; db >= botDb; db -= 10.0f) g.drawHorizontalLine ((int) dbToY (db), b.getX(), b.getRight());
-    g.setColour (juce::Colour (0xff6a717a));
+    const juce::Colour lc (0xff6a717a);
     g.setFont (juce::Font (juce::FontOptions (9.0f)));
     const char* fLbl[] = { "100", "1k", "10k" }; const double fVal[] = { 100, 1000, 10000 };
     for (int k = 0; k < 3; ++k) if (fVal[k] < maxF)
-        g.drawText (fLbl[k], (int) freqToX (fVal[k]) - 13, (int) b.getBottom() - 13, 26, 12, juce::Justification::centred);
+        drawChipText (g, fLbl[k], { (int) freqToX (fVal[k]) - 13, (int) b.getBottom() - 13, 26, 12 }, juce::Justification::centred, lc);
+    // dB labels sit on their line; the bottom one (-90, on the plot edge) is kept inside.
+    // On short windows a label that would overlap the one above it is skipped.
+    int lastLabelY = -1000;
     for (float db = topDb - 10.0f; db >= botDb; db -= 10.0f)
-        g.drawText (juce::String ((int) db), 4, (int) dbToY (db) - 6, 30, 12, juce::Justification::left);
+    {
+        const int y = juce::jmin ((int) dbToY (db) - 6, (int) b.getBottom() - 14);
+        if (y - lastLabelY < 12)
+            continue;
+        drawChipText (g, juce::String ((int) db), { 4, y, 30, 12 }, juce::Justification::left, lc);
+        lastLabelY = y;
+    }
 
     const int front = specFront.load (std::memory_order_acquire);
     if (front < 0) return; // nothing analysed yet

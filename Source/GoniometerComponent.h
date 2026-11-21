@@ -18,7 +18,8 @@ private:
 
     CycloscopeProcessor& proc;
     std::vector<float> capL, capR;
-    juce::Image persistImage;               // phosphor-persistence accumulation buffer
+    juce::Image persistImage;               // phosphor-persistence accumulation buffer (plot square, physical px)
+    juce::Rectangle<int> persistArea;       // where persistImage sits, in component coordinates
     float gonioGain = 1.0f;                  // smoothed display gain (stable, gated, capped)
     float lDbShown = -100.0f, rDbShown = -100.0f; // meter ballistics for the L/R readout
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoniometerComponent)
