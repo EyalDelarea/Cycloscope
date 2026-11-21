@@ -189,11 +189,11 @@ static T* findChild (juce::Component& parent)
 }
 
 // Pixels that belong to the bright orange trace (accent 0xffff8a2b), not the dim fill/glow.
-static int countTracePixels (const juce::Image& img)
+static int countTracePixels (const juce::Image& img, int maxRows = 1 << 30)
 {
     int n = 0;
     const juce::Image::BitmapData bd (img, juce::Image::BitmapData::readOnly);
-    for (int y = 0; y < img.getHeight(); ++y)
+    for (int y = 0; y < juce::jmin (maxRows, img.getHeight()); ++y)
         for (int x = 0; x < img.getWidth(); ++x)
         {
             const auto c = bd.getPixelColour (x, y);
@@ -226,7 +226,8 @@ static void testNonFiniteInputRecovers()
             return scope->createComponentSnapshot (scope->getLocalBounds(), true, 1.0f);
         };
         for (int i = 0; i < 10; ++i) frame (5);
-        const int healthy = countTracePixels (frame (5));
+        const auto healthyImg = frame (5);
+        const int healthy = countTracePixels (healthyImg);
         CHECK (healthy > 300);
 
         // poison: one block of garbage; audio must still pass through bit-for-bit
@@ -256,7 +257,13 @@ static void testNonFiniteInputRecovers()
             juce::PNGImageFormat().writeImageToStream (afterImg, os);
         }
         std::printf ("  non-finite recovery, mode %d: trace pixels before %d, after %d\n", mode, healthy, after);
-        CHECK (after > healthy / 2);
+        // Broken state (seen on main): the spectrum trace sticks to the top edge and the total
+        // pixel count lands anywhere from 40% to 55% of healthy. Require the trace to be back to
+        // its healthy size (within 20%) and nothing pinned along the top 6 rows.
+        const int healthyTop = countTracePixels (healthyImg, 6), afterTop = countTracePixels (afterImg, 6);
+        std::printf ("  non-finite recovery, mode %d: top-edge trace pixels before %d, after %d\n", mode, healthyTop, afterTop);
+        CHECK (after >= healthy * 8 / 10 && after <= healthy * 12 / 10);
+        CHECK (afterTop <= healthyTop + 10);
     }
 }
 

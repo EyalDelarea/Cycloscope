@@ -40,10 +40,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 - **Scope buffer thread safety:** the samples shared between the audio thread and the display
   were plain floats read and written concurrently (a data race); they are now lock-free atomics,
   with no cost or allocation on the audio thread.
-- **Tests:** the DSP test suites' `assert()` checks were compiled out in Release (as CI builds),
-  so they checked nothing; they are live again. New JUCE-level plugin tests cover state restore,
-  the audio-callback contract (bit-exact passthrough, no allocation), hostile input and the
-  editor lifecycle, plus a `--render` tool that snapshots the UI to PNG.
+
+### Development
+- The DSP test suites' `assert()` checks were compiled out in Release (as CI builds), so they
+  checked nothing; they are live again. New JUCE-level plugin tests (`-DCYCLOSCOPE_PLUGIN_TESTS=ON`,
+  on in CI) cover state restore, the audio-callback contract (bit-exact passthrough, no
+  allocation), hostile input and the editor lifecycle, plus `--render` / `--bench` tools.
+  `-DCYCLOSCOPE_SANITIZER=address|thread|undefined` instruments the test targets.
 
 ## [0.2.0] — 2026-06-08
 

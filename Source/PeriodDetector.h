@@ -61,7 +61,9 @@ inline std::vector<double> computeNsdf (const float* buf, int numSamples, int ma
     {
         const double r  = spec[(std::size_t) tau].real() * invM;
         const double mm = sq[(std::size_t) (numSamples - tau)] + (sq[(std::size_t) numSamples] - sq[(std::size_t) tau]);
-        nsdf[(std::size_t) tau] = mm > 0.0 ? 2.0 * r / mm : 0.0;
+        // The FFT's rounding error scales with the whole buffer's energy, so unlike the direct sum
+        // it is not bounded by Cauchy-Schwarz: ignore lags with (almost) no energy and clamp.
+        nsdf[(std::size_t) tau] = mm > 1e-9 * sq[(std::size_t) numSamples] ? std::clamp (2.0 * r / mm, -1.0, 1.0) : 0.0;
     }
     return nsdf;
 }
