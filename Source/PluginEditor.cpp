@@ -25,7 +25,11 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
 
     divider.onDrag = [this] (int dx)
     {
-        const int w = juce::jlimit (140, 480, processorRef.gonioWidth.load() - dx);
+        // Start from the width actually shown (it may be narrower than the stored one
+        // on a small window) so the drag responds immediately, never "dead" at first.
+        const int shownW = goniometer.getWidth() + 12; // panel strip = goniometer + 6 px margins
+        const int w = juce::jlimit (CycloscopeProcessor::kMinGonioWidth, CycloscopeProcessor::kMaxGonioWidth,
+                                    shownW - dx);
         processorRef.gonioWidth.store (w);
         resized();
     };
@@ -56,12 +60,12 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     clearButton.onClick = [this] { scope.clearCaptures(); };
     exportButton.onClick = [this]
     {
-        auto fc = std::make_shared<juce::FileChooser> (
+        fileChooser = std::make_unique<juce::FileChooser> (
             "Export single cycle (wavetable)",
             juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile ("Cycloscope-cycle.wav"),
             "*.wav");
-        fc->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
-            [this, fc] (const juce::FileChooser& chooser)
+        fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
+            [this] (const juce::FileChooser& chooser)
             {
                 const auto f = chooser.getResult();
                 if (f != juce::File{}) scope.exportHeldCycle (f.withFileExtension ("wav"));
@@ -112,7 +116,8 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     freezeButton.setTooltip    ("Pause the display so you can inspect the current frame.");
 
     setResizable (true, true);
-    setResizeLimits (560, 340, 2400, 1400);
+    setResizeLimits (CycloscopeProcessor::kMinWidth, CycloscopeProcessor::kMinHeight,
+                     CycloscopeProcessor::kMaxWidth, CycloscopeProcessor::kMaxHeight);
     setSize (processorRef.editorWidth.load(), processorRef.editorHeight.load());
 
     // GPU-accelerate component rendering. Multisampling/pixel format must be set before
@@ -216,7 +221,12 @@ void CycloscopeEditor::resized()
     auto controls = r.removeFromBottom (92);
     if (processorRef.gonioShown.load()) // collapsed -> scope takes the full width, panel renders nothing
     {
-        auto gonioStrip = r.removeFromRight (processorRef.gonioWidth.load()); // adjustable
+        // The stored (user-dragged) width is kept as-is; only on a window too narrow for it
+        // does the panel give way, so the main display always keeps at least half the width
+        // (31 = the 7 px divider + the scope's 2 x 12 px margins).
+        const int gonioW = juce::jmin (processorRef.gonioWidth.load(),
+                                       juce::jmax (CycloscopeProcessor::kMinGonioWidth, r.getWidth() / 2 - 31));
+        auto gonioStrip = r.removeFromRight (gonioW); // adjustable
         goniometer.setBounds (gonioStrip.reduced (6, 4));
         divider.setBounds (r.removeFromRight (7));
     }
@@ -318,10 +328,10 @@ void CycloscopeEditor::applyFactory (int idx)
 
 void CycloscopeEditor::savePreset()
 {
-    auto fc = std::make_shared<juce::FileChooser> ("Save preset",
+    fileChooser = std::make_unique<juce::FileChooser> ("Save preset",
         presetDir().getChildFile ("preset.smx"), "*.smx");
-    fc->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
-        [this, fc] (const juce::FileChooser& c)
+    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& c)
         {
             const auto f = c.getResult();
             if (f == juce::File{}) return;
@@ -332,13 +342,14 @@ void CycloscopeEditor::savePreset()
 
 void CycloscopeEditor::loadPreset()
 {
-    auto fc = std::make_shared<juce::FileChooser> ("Load preset", presetDir(), "*.smx");
-    fc->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-        [this, fc] (const juce::FileChooser& c)
+    fileChooser = std::make_unique<juce::FileChooser> ("Load preset", presetDir(), "*.smx");
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& c)
         {
             const auto f = c.getResult();
             if (f == juce::File{} || ! f.existsAsFile()) return;
-            if (auto xml = juce::XmlDocument::parse (f))
+            // Only adopt a Cycloscope preset; any other XML file is ignored.
+            if (auto xml = juce::XmlDocument::parse (f); xml != nullptr && xml->hasTagName (processorRef.apvts.state.getType()))
                 processorRef.apvts.replaceState (juce::ValueTree::fromXml (*xml));
         });
 }

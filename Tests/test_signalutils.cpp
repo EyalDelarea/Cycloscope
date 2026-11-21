@@ -37,6 +37,12 @@ int main()
     assert (combineChannel (0.5f, 0.25f, 2) == 0.25f);  // right
     assert (combineChannel (0.5f, 0.25f, 3) == 0.125f); // side = (L-R)/2
 
+    // displaySafe: finite in-range values pass untouched; NaN/Inf -> 0; huge -> clamped
+    assert (displaySafe (0.25f) == 0.25f && displaySafe (-1.5f) == -1.5f);
+    assert (displaySafe (std::nanf ("")) == 0.0f);
+    assert (displaySafe (INFINITY) == 0.0f && displaySafe (-INFINITY) == 0.0f);
+    assert (displaySafe (1.0e30f) == 64.0f && displaySafe (-1.0e30f) == -64.0f);
+
     std::puts ("signalutils OK");
     return 0;
 }

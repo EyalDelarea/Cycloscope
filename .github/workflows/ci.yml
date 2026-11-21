@@ -9,12 +9,12 @@ on:
 jobs:
   build-test:
     name: Build · Test · auval (macOS)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
       - name: Configure (universal)
-        run: cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCYCLOSCOPE_PLUGIN_TESTS=ON
 
       - name: Build (Standalone + VST3 + AU)
         run: cmake --build build -j3
@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCYCLOSCOPE_PLUGIN_TESTS=ON
 
       - name: Build (Standalone + VST3)
         run: cmake --build build --config Release -j

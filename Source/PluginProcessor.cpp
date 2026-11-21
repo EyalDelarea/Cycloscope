@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "SignalUtils.h"
 
 CycloscopeProcessor::CycloscopeProcessor()
     : AudioProcessor (BusesProperties()
@@ -82,8 +83,8 @@ void CycloscopeProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         const float* inR = buffer.getReadPointer (numCh > 1 ? 1 : 0);
         for (int n = 0; n < numSamples; ++n)
         {
-            scopeBufferL->write (inL[n]);
-            scopeBufferR->write (inR[n]); // mono input -> R mirrors L
+            scopeBufferL->write (displaySafe (inL[n]));
+            scopeBufferR->write (displaySafe (inR[n])); // mono input -> R mirrors L
         }
     }
     // passthrough: output already equals input (visualize only)
@@ -109,13 +110,25 @@ void CycloscopeProcessor::getStateInformation (juce::MemoryBlock& destData)
 
 void CycloscopeProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+    // Only ever adopt our own state: a host can hand back another plugin's chunk or a
+    // corrupted one, and replaceState would otherwise swap in a foreign tree.
+    if (xml != nullptr && xml->hasTagName (apvts.state.getType()))
     {
-        editorWidth.store  (xml->getIntAttribute ("editorWidth",  editorWidth.load()));
-        editorHeight.store (xml->getIntAttribute ("editorHeight", editorHeight.load()));
-        gonioWidth.store   (xml->getIntAttribute ("gonioWidth",   gonioWidth.load()));
+        // Sizes are clamped to what the editor can show (in-range values load verbatim).
+        editorWidth.store  (juce::jlimit (kMinWidth,  kMaxWidth,  xml->getIntAttribute ("editorWidth",  editorWidth.load())));
+        editorHeight.store (juce::jlimit (kMinHeight, kMaxHeight, xml->getIntAttribute ("editorHeight", editorHeight.load())));
+        gonioWidth.store   (juce::jlimit (kMinGonioWidth, kMaxGonioWidth, xml->getIntAttribute ("gonioWidth", gonioWidth.load())));
         gonioShown.store   (xml->getIntAttribute ("gonioShown",   gonioShown.load() ? 1 : 0) != 0);
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
+
+        // An on/off parameter keeps whatever raw value a host last sent (e.g. 0.37), and the
+        // restore above skips it when the stored step already matches, so the same state could
+        // come back as 0.37 or as 0. Snap switches to the step they actually hold.
+        for (auto* param : getParameters())
+            if (auto* sw = dynamic_cast<juce::AudioParameterBool*> (param))
+                if (const float stepped = sw->get() ? 1.0f : 0.0f; param->getValue() != stepped)
+                    sw->setValueNotifyingHost (stepped);
     }
 }
 

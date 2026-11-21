@@ -63,34 +63,66 @@ target_link_libraries(Cycloscope
 
 # ---- Tests ----
 enable_testing()
-add_executable(test_ringbuffer Tests/test_ringbuffer.cpp)
-target_include_directories(test_ringbuffer PRIVATE Source)
-add_test(NAME ringbuffer COMMAND test_ringbuffer)
 
-add_executable(test_trigger Tests/test_trigger.cpp)
-target_include_directories(test_trigger PRIVATE Source)
-add_test(NAME trigger COMMAND test_trigger)
+# Sanitizer builds of the test targets only (the plugin itself is never instrumented):
+#   cmake -B build-asan -DCYCLOSCOPE_SANITIZER=address   (or thread / undefined)
+#   cmake --build build-asan --target cycloscope_plugin_tests test_ringbuffer ...
+set(CYCLOSCOPE_SANITIZER "" CACHE STRING "Instrument the test targets: address, thread or undefined")
+function(cycloscope_sanitize target)
+    if(CYCLOSCOPE_SANITIZER AND NOT MSVC)
+        target_compile_options(${target} PRIVATE -fsanitize=${CYCLOSCOPE_SANITIZER} -fno-omit-frame-pointer -g)
+        target_link_options(${target} PRIVATE -fsanitize=${CYCLOSCOPE_SANITIZER})
+    endif()
+endfunction()
 
-add_executable(test_perioddetector Tests/test_perioddetector.cpp)
-target_include_directories(test_perioddetector PRIVATE Source)
-add_test(NAME perioddetector COMMAND test_perioddetector)
+# The DSP tests check with assert(). Release builds (CI configures Release) define NDEBUG,
+# which would silently compile every check away, so keep asserts live in the test targets.
+function(cycloscope_dsp_test name)
+    add_executable(test_${name} Tests/test_${name}.cpp)
+    target_include_directories(test_${name} PRIVATE Source)
+    target_compile_options(test_${name} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)
+    cycloscope_sanitize(test_${name})
+    add_test(NAME ${name} COMMAND test_${name})
+endfunction()
 
-add_executable(test_cycleaverager Tests/test_cycleaverager.cpp)
-target_include_directories(test_cycleaverager PRIVATE Source)
-add_test(NAME cycleaverager COMMAND test_cycleaverager)
+cycloscope_dsp_test(ringbuffer)
+cycloscope_dsp_test(trigger)
+cycloscope_dsp_test(perioddetector)
+cycloscope_dsp_test(cycleaverager)
+cycloscope_dsp_test(signalutils)
+cycloscope_dsp_test(phasealign)
+cycloscope_dsp_test(notename)
+cycloscope_dsp_test(stereoutils)
 
-add_executable(test_signalutils Tests/test_signalutils.cpp)
-target_include_directories(test_signalutils PRIVATE Source)
-add_test(NAME signalutils COMMAND test_signalutils)
-
-add_executable(test_phasealign Tests/test_phasealign.cpp)
-target_include_directories(test_phasealign PRIVATE Source)
-add_test(NAME phasealign COMMAND test_phasealign)
-
-add_executable(test_notename Tests/test_notename.cpp)
-target_include_directories(test_notename PRIVATE Source)
-add_test(NAME notename COMMAND test_notename)
-
-add_executable(test_stereoutils Tests/test_stereoutils.cpp)
-target_include_directories(test_stereoutils PRIVATE Source)
-add_test(NAME stereoutils COMMAND test_stereoutils)
+# ---- Plugin-level tests + dev tooling (state, audio-callback contract, editor lifecycle,
+# render-to-PNG). Compiled from the plugin's own sources so it runs headless on CI.
+# Off by default so release builds do not build or gate on it; CI turns it on.
+option(CYCLOSCOPE_PLUGIN_TESTS "Build the JUCE-level plugin tests / render harness" OFF)
+if(CYCLOSCOPE_PLUGIN_TESTS)
+    juce_add_console_app(cycloscope_plugin_tests PRODUCT_NAME "cycloscope_plugin_tests")
+    target_sources(cycloscope_plugin_tests PRIVATE
+        Tests/plugin_tests.cpp
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp
+        Source/ScopeComponent.cpp
+        Source/ScopeLookAndFeel.cpp
+        Source/ModeToggle.cpp
+        Source/GoniometerComponent.cpp
+    )
+    target_include_directories(cycloscope_plugin_tests PRIVATE Source)
+    target_compile_definitions(cycloscope_plugin_tests PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_MODAL_LOOPS_PERMITTED=1   # lets the tests pump the message loop (timers)
+    )
+    target_link_libraries(cycloscope_plugin_tests PRIVATE
+        Cycloscope_fonts
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_opengl
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+    )
+    cycloscope_sanitize(cycloscope_plugin_tests)
+    add_test(NAME plugin COMMAND cycloscope_plugin_tests)
+endif()

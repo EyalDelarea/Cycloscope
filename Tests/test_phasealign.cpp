@@ -27,6 +27,24 @@ int main()
     // identical inputs -> shift 0
     assert (bestCircularShift (ref.data(), ref.data(), n) == 0);
 
+    // the split (modulo-free) loop must pick exactly the shift the plain modulo sum picks
+    unsigned seed = 7;
+    auto rnd = [&seed] { seed = seed * 1664525u + 1013904223u; return (float) ((seed >> 8) & 0xffff) / 32768.0f - 1.0f; };
+    for (int len : { 1, 2, 3, 17, 128, 1000, 1080 })
+        for (int trial = 0; trial < 4; ++trial)
+        {
+            std::vector<float> x ((size_t) len), y ((size_t) len);
+            for (int i = 0; i < len; ++i) { x[(size_t) i] = rnd(); y[(size_t) i] = rnd(); }
+            int best = 0; double bestCorr = -1e300;
+            for (int sh = 0; sh < len; ++sh)
+            {
+                double c = 0.0;
+                for (int i = 0; i < len; ++i) c += (double) x[(size_t) ((i + sh) % len)] * (double) y[(size_t) i];
+                if (c > bestCorr) { bestCorr = c; best = sh; }
+            }
+            assert (bestCircularShift (x.data(), y.data(), len) == best);
+        }
+
     std::puts ("phasealign OK");
     return 0;
 }

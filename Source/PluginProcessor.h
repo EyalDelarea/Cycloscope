@@ -25,7 +25,8 @@ public:
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
+    // A named single program: the VST3 SDK validator fails a program list with an unnamed entry.
+    const juce::String getProgramName (int) override { return "Default"; }
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock&) override;
@@ -33,6 +34,10 @@ public:
 
     RingBuffer& getScopeBufferL() noexcept { return *scopeBufferL; }
     RingBuffer& getScopeBufferR() noexcept { return *scopeBufferR; }
+    // Editor size limits (window) and the stereo panel's draggable width range.
+    static constexpr int kMinWidth = 560, kMaxWidth = 2400, kMinHeight = 340, kMaxHeight = 1400;
+    static constexpr int kMinGonioWidth = 140, kMaxGonioWidth = 480;
+
     std::atomic<double> currentSampleRate { 44100.0 };
     std::atomic<double> hostBpm { 120.0 };
     std::atomic<int> editorWidth  { 1080 };

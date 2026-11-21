@@ -6,6 +6,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### Fixed
+- **Freeze restores consistently:** a host can send the Freeze switch an in-between value (e.g.
+  0.37); restoring a saved state could then leave it reporting that raw value or the switched one,
+  depending on what it held before. It now always comes back as on or off (pluginval 2
+  "Discrete parameter state restoration").
+- **VST3 passes the Steinberg validator:** the plugin's single program had an empty name, which the
+  VST3 SDK validator (run by pluginval) rejects as "Program 000 has no name"; it is now "Default".
+- **Base Shape no longer hogs the host's UI thread:** pitch detection ran a direct
+  O(N·lag) correlation every frame (≈10–30 ms of CPU per frame at 44.1–192 kHz, i.e. more than
+  the 60 fps budget, under the host's message lock). It now uses an FFT (≈1 ms per frame),
+  with identical results to the old detector; the cycle phase search is ~2× faster too.
+- **Bad input no longer breaks the display:** a single block of NaN / Inf / absurdly loud
+  samples from an upstream plugin left the spectrum stuck (its ballistics held NaN forever).
+  The copy the analyzer reads is now sanitised; the audio itself still passes through untouched.
+- **Saved-state robustness:** a host handing back another plugin's or a corrupted chunk is
+  ignored instead of replacing the parameter tree; out-of-range stored window / stereo-panel
+  sizes are clamped. Valid sessions (including v0.1.0 ones) load exactly as before.
+- **Small windows:** the stereo panel now yields space on narrow windows instead of squeezing
+  the main display to a sliver (it keeps at least half the width); your dragged panel width is
+  kept, and windows wide enough for it look exactly as before.
+- **Closing the window with a file dialog open** (Export / Save / Load preset) could call back
+  into the deleted editor; the dialog is now dismissed with the window.
+- **Preset loading** ignores XML files that are not Cycloscope presets.
+- **Scope buffer thread safety:** the samples shared between the audio thread and the display
+  were plain floats read and written concurrently (a data race); they are now lock-free atomics,
+  with no cost or allocation on the audio thread.
+
+### Development
+- The DSP test suites' `assert()` checks were compiled out in Release (as CI builds), so they
+  checked nothing; they are live again. New JUCE-level plugin tests (`-DCYCLOSCOPE_PLUGIN_TESTS=ON`,
+  on in CI) cover state restore, the audio-callback contract (bit-exact passthrough, no
+  allocation), hostile input and the editor lifecycle, plus `--render` / `--bench` tools.
+  `-DCYCLOSCOPE_SANITIZER=address|thread|undefined` instruments the test targets.
+
 ## [0.2.0] — 2026-06-08
 
 Spectrum analyzer overhaul (FabFilter Pro-Q-class response) and GPU rendering.
