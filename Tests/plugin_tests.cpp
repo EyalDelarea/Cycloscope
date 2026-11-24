@@ -477,9 +477,11 @@ static int bench (const juce::StringArray&)
             pumpMessages (2000);
             const double timerPct = 100.0 * (cpuSeconds() - c0) / ((juce::Time::getMillisecondCounterHiRes() - t0) * 0.001);
 
+            // CYCLOSCOPE_BENCH_SCALE=2 measures painting at Retina density.
+            const float benchScale = (float) juce::jmax (1.0, juce::SystemStats::getEnvironmentVariable ("CYCLOSCOPE_BENCH_SCALE", "1").getDoubleValue());
             const int frames = 30;
             const double p0 = cpuSeconds();
-            for (int i = 0; i < frames; ++i) ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
+            for (int i = 0; i < frames; ++i) ed->createComponentSnapshot (ed->getLocalBounds(), true, benchScale);
             const double paintMs = 1000.0 * (cpuSeconds() - p0) / frames;
             std::printf ("%-10.0f %4dx%-5d %-10s %10.2f %14.1f\n", c.sr, c.w, c.h, modeNames[mode], paintMs, timerPct);
         }

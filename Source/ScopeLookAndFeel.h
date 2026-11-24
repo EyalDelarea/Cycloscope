@@ -26,6 +26,9 @@ public:
     void drawButtonText (juce::Graphics&, juce::TextButton&,
                          bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
 
+    // Window resize grip: muted hairlines (JUCE's default is bright white), accent on hover.
+    void drawCornerResizer (juce::Graphics&, int w, int h, bool isMouseOver, bool isMouseDragging) override;
+
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 
     juce::Font getComboBoxFont (juce::ComboBox&) override;

@@ -37,6 +37,7 @@ CycloscopeEditor::CycloscopeEditor (CycloscopeProcessor& p)
     wordmark.setText ("Cycloscope", juce::dontSendNotification);
     wordmark.setFont (juce::Font (juce::FontOptions (15.0f)).boldened());
     wordmark.setColour (juce::Label::textColourId, juce::Colour (0xffc4c9d0));
+    wordmark.setBorderSize ({});
     addAndMakeVisible (wordmark);
 
     presetButton.setTooltip ("Factory presets + save / load your own.");
@@ -202,7 +203,7 @@ void CycloscopeEditor::resized()
     auto r = getLocalBounds();
 
     auto top = r.removeFromTop (44);
-    wordmark.setBounds (top.removeFromLeft (108).withTrimmedLeft (14));
+    wordmark.setBounds (top.removeFromLeft (108).withTrimmedLeft (12)); // text aligns with the scope's left edge
     presetButton.setBounds (top.removeFromLeft (84).reduced (4, 9));
     modeToggle.setBounds (top.removeFromRight (220).reduced (6, 9));
     stereoButton.setBounds (top.removeFromRight (74).reduced (4, 9));
@@ -236,7 +237,7 @@ void CycloscopeEditor::resized()
     for (auto* lc : { &sourceLC, &syncLC, &triggerLC, &sweepLC, &thresholdLC, &timeLC, &cyclesLC, &ampLC, &freezeLC })
         if (lc->isVisible()) visible.add (lc);
 
-    auto bar = controls.reduced (14, 8);
+    auto bar = controls.reduced (6, 8); // + each cell's 6 px inset = the scope's 12 px margin
     controlBarTop = bar.getY();
     controlBarBottom = bar.getBottom();
     dividerXs.clear();

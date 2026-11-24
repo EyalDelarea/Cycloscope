@@ -324,3 +324,12 @@ void ScopeLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& l
     label.setJustificationType (juce::Justification::centredLeft);
     label.setMinimumHorizontalScale (0.5f);
 }
+
+void ScopeLookAndFeel::drawCornerResizer (juce::Graphics& g, int w, int h, bool isMouseOver, bool isMouseDragging)
+{
+    const float lineThickness = 1.0f;
+    g.setColour ((isMouseOver || isMouseDragging) ? juce::Colour (accent).withAlpha (0.75f)
+                                                  : juce::Colour (0xff5d646e));
+    for (float i = 0.3f; i < 1.0f; i += 0.3f)
+        g.drawLine ((float) w * i, (float) h + 1.0f, (float) w + 1.0f, (float) h * i, lineThickness);
+}

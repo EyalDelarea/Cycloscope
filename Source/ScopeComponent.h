@@ -24,7 +24,7 @@ private:
                     float midY, float halfH, int width, juce::Colour col);
     void timerCallback() override;
     void drawGrid (juce::Graphics& g, juce::Rectangle<float> b, bool baseShape);
-    void ensureGrid (int w, int h, bool baseShape);
+    void ensureGrid (int w, int h, bool baseShape, float scale);
     void paintSpectrum (juce::Graphics& g, juce::Rectangle<float> b);
     void analyse(); // FFT + per-bin ballistics, runs on the timer (off the paint path)
     void buildLive (std::vector<float>& ys, int width, float midY, float halfH, float ampZoom);
@@ -65,7 +65,9 @@ private:
     int specBack = 0;
     double lastAnalyseMs = 0.0;                  // for frame-rate-independent release ballistics
 
-    juce::Image gridCache;                      // cached static grid layer (perf)
+    juce::Image gridCache;                      // cached static grid layer (perf), at physical px
+    int gridW = 0, gridH = 0;
+    float gridScale = 1.0f;
     bool gridBaseCached = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ScopeComponent)
 };
